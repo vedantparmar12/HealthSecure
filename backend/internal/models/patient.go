@@ -7,14 +7,14 @@ import (
 )
 
 type Patient struct {
-	ID               uint            `json:"id" gorm:"primaryKey"`
-	FirstName        string          `json:"first_name" gorm:"not null"`
-	LastName         string          `json:"last_name" gorm:"not null"`
+	ID               uint            `json:"id" gorm:"primaryKey;type:bigint unsigned;autoIncrement"`
+	FirstName        string          `json:"first_name" gorm:"type:varchar(100);not null"`
+	LastName         string          `json:"last_name" gorm:"type:varchar(100);not null"`
 	DateOfBirth      time.Time       `json:"date_of_birth"`
-	SSN              string          `json:"ssn,omitempty" gorm:"unique;column:ssn"`
-	Phone            string          `json:"phone"`
-	Address          string          `json:"address"`
-	EmergencyContact string          `json:"emergency_contact"`
+	SSN              string          `json:"ssn,omitempty" gorm:"type:varchar(20);unique;column:ssn"`
+	Phone            string          `json:"phone" gorm:"type:varchar(20)"`
+	Address          string          `json:"address" gorm:"type:text"`
+	EmergencyContact string          `json:"emergency_contact" gorm:"type:varchar(200)"`
 	MedicalRecords   []MedicalRecord `json:"medical_records,omitempty"`
 	CreatedAt        time.Time       `json:"created_at"`
 	UpdatedAt        time.Time       `json:"updated_at"`

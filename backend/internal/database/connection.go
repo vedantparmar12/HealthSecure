@@ -3,14 +3,17 @@ package database
 import (
 	"fmt"
 	"log"
+	"os"
 	"time"
 
 	"healthsecure/configs"
 	"healthsecure/internal/models"
 
 	"gorm.io/driver/mysql"
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
+	_ "modernc.org/sqlite" // Pure Go SQLite driver
 )
 
 var DB *gorm.DB
@@ -27,14 +30,41 @@ func Initialize(config *configs.Config) error {
 		}
 	} else {
 		gormConfig = &gorm.Config{
-			Logger: logger.Default.LogMode(logger.Info),
+			Logger: logger.Default.LogMode(logger.Warn),
 		}
 	}
 
-	// Open database connection
-	DB, err = gorm.Open(mysql.Open(config.GetDatabaseDSN()), gormConfig)
-	if err != nil {
-		return fmt.Errorf("failed to connect to database: %w", err)
+	// Use MySQL for Railway or remote hosts, SQLite for local development
+	if config.Database.Host != "" && config.Database.Host != "localhost" && config.Database.Host != "127.0.0.1" {
+		DB, err = gorm.Open(mysql.Open(config.GetDatabaseDSN()), gormConfig)
+		if err != nil {
+			log.Printf("MySQL connection failed, falling back to SQLite: %v", err)
+			// Create data directory if it doesn't exist
+			if err := os.MkdirAll("data", 0755); err != nil {
+				return fmt.Errorf("failed to create data directory: %w", err)
+			}
+			DB, err = gorm.Open(sqlite.Dialector{
+			DriverName: "sqlite",
+			DSN:        "data/healthsecure.db",
+		}, gormConfig)
+			if err != nil {
+				return fmt.Errorf("failed to connect to SQLite database: %w", err)
+			}
+			log.Println("Using SQLite database for development")
+		}
+	} else {
+		// Default to SQLite for development
+		if err := os.MkdirAll("data", 0755); err != nil {
+			return fmt.Errorf("failed to create data directory: %w", err)
+		}
+		DB, err = gorm.Open(sqlite.Dialector{
+			DriverName: "sqlite",
+			DSN:        "data/healthsecure.db",
+		}, gormConfig)
+		if err != nil {
+			return fmt.Errorf("failed to connect to SQLite database: %w", err)
+		}
+		log.Println("Using SQLite database for development")
 	}
 
 	// Get underlying sql.DB for connection pool configuration
@@ -58,6 +88,13 @@ func Initialize(config *configs.Config) error {
 	// Run auto migrations
 	if err := runMigrations(); err != nil {
 		return fmt.Errorf("failed to run migrations: %w", err)
+	}
+
+	// Seed demo users for development
+	if !config.IsProduction() {
+		if err := seedDemoUsers(); err != nil {
+			log.Printf("Failed to seed demo users: %v", err)
+		}
 	}
 
 	return nil
@@ -93,9 +130,9 @@ func runMigrations() error {
 
 // Additional models for system functionality
 type BlacklistedToken struct {
-	ID        uint      `json:"id" gorm:"primaryKey"`
+	ID        uint      `json:"id" gorm:"primaryKey;type:bigint unsigned;autoIncrement"`
 	TokenHash string    `json:"token_hash" gorm:"unique;not null"`
-	UserID    uint      `json:"user_id" gorm:"not null;index"`
+	UserID    uint      `json:"user_id" gorm:"not null;index;type:bigint unsigned"`
 	ExpiresAt time.Time `json:"expires_at" gorm:"not null;index"`
 	CreatedAt time.Time `json:"created_at" gorm:"autoCreateTime"`
 
@@ -107,8 +144,8 @@ func (bt *BlacklistedToken) TableName() string {
 }
 
 type UserSession struct {
-	ID           uint      `json:"id" gorm:"primaryKey"`
-	UserID       uint      `json:"user_id" gorm:"not null;index"`
+	ID           uint      `json:"id" gorm:"primaryKey;type:bigint unsigned;autoIncrement"`
+	UserID       uint      `json:"user_id" gorm:"not null;index;type:bigint unsigned"`
 	SessionID    string    `json:"session_id" gorm:"unique;not null"`
 	IPAddress    string    `json:"ip_address" gorm:"not null"`
 	UserAgent    string    `json:"user_agent" gorm:"type:text"`
@@ -124,11 +161,11 @@ func (us *UserSession) TableName() string {
 }
 
 type SystemSetting struct {
-	ID           uint      `json:"id" gorm:"primaryKey"`
+	ID           uint      `json:"id" gorm:"primaryKey;type:bigint unsigned;autoIncrement"`
 	SettingKey   string    `json:"setting_key" gorm:"unique;not null"`
 	SettingValue string    `json:"setting_value" gorm:"type:text"`
 	Description  string    `json:"description" gorm:"type:text"`
-	UpdatedBy    *uint     `json:"updated_by"`
+	UpdatedBy    *uint     `json:"updated_by" gorm:"type:bigint unsigned"`
 	UpdatedAt    time.Time `json:"updated_at" gorm:"autoUpdateTime"`
 
 	UpdatedByUser *models.User `json:"updated_by_user,omitempty" gorm:"foreignKey:UpdatedBy"`
@@ -159,15 +196,15 @@ const (
 )
 
 type SecurityEvent struct {
-	ID          uint                  `json:"id" gorm:"primaryKey"`
+	ID          uint                  `json:"id" gorm:"primaryKey;type:bigint unsigned;autoIncrement"`
 	EventType   SecurityEventType     `json:"event_type" gorm:"not null;index"`
 	Severity    SecurityEventSeverity `json:"severity" gorm:"default:'MEDIUM';index"`
-	UserID      *uint                 `json:"user_id" gorm:"index"`
+	UserID      *uint                 `json:"user_id" gorm:"index;type:bigint unsigned"`
 	IPAddress   string                `json:"ip_address" gorm:"size:45"`
 	Description string                `json:"description" gorm:"type:text;not null"`
 	Details     string                `json:"details" gorm:"type:json"`
 	Resolved    bool                  `json:"resolved" gorm:"default:false;index"`
-	ResolvedBy  *uint                 `json:"resolved_by"`
+	ResolvedBy  *uint                 `json:"resolved_by" gorm:"type:bigint unsigned"`
 	ResolvedAt  *time.Time            `json:"resolved_at"`
 	CreatedAt   time.Time             `json:"created_at" gorm:"autoCreateTime;index"`
 
@@ -307,4 +344,56 @@ func StartCleanupScheduler() {
 	}()
 
 	log.Println("Database cleanup scheduler started")
+}
+
+// seedDemoUsers creates demo users for development if they don't exist
+func seedDemoUsers() error {
+	log.Println("Seeding demo users for development...")
+
+	demoUsers := []models.User{
+		{
+			Name:     "Dr. John Smith",
+			Email:    "dr.smith@hospital.local",
+			Password: "$2a$10$b6v3JhBelIMbx4fWAf2aYurrPP7HHNQ63ZL5VZJNWlN/tfQQzhhu.", // "Doctor123"
+			Role:     models.RoleDoctor,
+			Active:   true,
+		},
+		{
+			Name:     "Nurse Jane Wilson",
+			Email:    "nurse.jane@hospital.local",
+			Password: "$2a$10$Y2jnrSx4oi2byIQZEUBov.w4S.EP24vTUlmjiM7n3vORfq.Cs.eF.", // "Nurse123"
+			Role:     models.RoleNurse,
+			Active:   true,
+		},
+		{
+			Name:     "Admin User",
+			Email:    "admin@hospital.local",
+			Password: "$2a$10$8.OLHoNHEF6KV2wWWWcgzuPqC1EphG8z7J8.7ySFqHJNhpDqDkBFS", // "admin123"
+			Role:     models.RoleAdmin,
+			Active:   true,
+		},
+	}
+
+	for _, user := range demoUsers {
+		var existingUser models.User
+		if err := DB.Where("email = ?", user.Email).First(&existingUser).Error; err != nil {
+			// User doesn't exist, create it
+			if err := DB.Create(&user).Error; err != nil {
+				return fmt.Errorf("failed to create demo user %s: %w", user.Email, err)
+			}
+			log.Printf("Created demo user: %s (%s)", user.Name, user.Email)
+		} else {
+			// User exists, update password if it's different
+			if existingUser.Password != user.Password {
+				existingUser.Password = user.Password
+				if err := DB.Save(&existingUser).Error; err != nil {
+					return fmt.Errorf("failed to update demo user password %s: %w", user.Email, err)
+				}
+				log.Printf("Updated demo user password: %s (%s)", user.Name, user.Email)
+			}
+		}
+	}
+
+	log.Println("Demo users seeded successfully")
+	return nil
 }

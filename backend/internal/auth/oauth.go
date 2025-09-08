@@ -204,7 +204,8 @@ func (o *OAuthService) HandleCallback(c *gin.Context) (*AuthResponse, error) {
 	}
 
 	// Update last login time
-	user.LastLogin = time.Now()
+	now := time.Now()
+	user.LastLogin = &now
 	database.GetDB().Save(user)
 
 	return tokens, nil
@@ -310,7 +311,7 @@ func (o *OAuthService) findOrCreateUser(userInfo *OAuthUserInfo) (*models.User, 
 		Role:      models.RoleNurse, // Default role, should be configured per organization
 		Active:    true,
 		Password:  "", // OAuth users don't need password
-		LastLogin: time.Now(),
+		LastLogin: nil,
 	}
 
 	if err := database.GetDB().Create(&user).Error; err != nil {
