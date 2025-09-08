@@ -15,13 +15,13 @@ const (
 )
 
 type User struct {
-	ID        uint      `json:"id" gorm:"primaryKey"`
-	Email     string    `json:"email" gorm:"unique;not null;index"`
-	Password  string    `json:"-" gorm:"not null"`
+	ID        uint      `json:"id" gorm:"primaryKey;type:bigint unsigned;autoIncrement"`
+	Email     string    `json:"email" gorm:"type:varchar(191);unique;not null;index"`
+	Password  string    `json:"-" gorm:"type:varchar(255);not null"`
 	Role      UserRole  `json:"role" gorm:"not null;type:enum('doctor','nurse','admin')"`
-	Name      string    `json:"name" gorm:"not null"`
+	Name      string    `json:"name" gorm:"type:varchar(100);not null"`
 	Active    bool      `json:"active" gorm:"default:true"`
-	LastLogin time.Time `json:"last_login"`
+	LastLogin *time.Time `json:"last_login"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }

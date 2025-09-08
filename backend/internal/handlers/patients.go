@@ -3,7 +3,6 @@ package handlers
 import (
 	"net/http"
 	"strconv"
-	"time"
 
 	"healthsecure/internal/auth"
 	"healthsecure/internal/models"

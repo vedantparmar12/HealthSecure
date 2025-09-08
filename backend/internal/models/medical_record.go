@@ -16,9 +16,11 @@ const (
 )
 
 type MedicalRecord struct {
-	ID          uint          `json:"id" gorm:"primaryKey"`
-	PatientID   uint          `json:"patient_id" gorm:"not null;index"`
-	DoctorID    uint          `json:"doctor_id" gorm:"not null;index"`
+	ID          uint          `json:"id" gorm:"primaryKey;type:bigint unsigned;autoIncrement"`
+	PatientID   uint          `json:"patient_id" gorm:"not null;index;type:bigint unsigned"`
+	Patient     Patient       `json:"patient,omitempty" gorm:"foreignKey:PatientID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE"`
+	DoctorID    uint          `json:"doctor_id" gorm:"not null;index;type:bigint unsigned"`
+	Doctor      User          `json:"doctor,omitempty" gorm:"foreignKey:DoctorID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE"`
 	Diagnosis   string        `json:"diagnosis" gorm:"type:text"`
 	Treatment   string        `json:"treatment" gorm:"type:text"`
 	Notes       string        `json:"notes" gorm:"type:text"`
@@ -26,9 +28,6 @@ type MedicalRecord struct {
 	Severity    SeverityLevel `json:"severity" gorm:"type:enum('low','medium','high','critical')"`
 	CreatedAt   time.Time     `json:"created_at"`
 	UpdatedAt   time.Time     `json:"updated_at"`
-
-	Patient Patient `json:"patient,omitempty" gorm:"foreignKey:PatientID"`
-	Doctor  User    `json:"doctor,omitempty" gorm:"foreignKey:DoctorID"`
 }
 
 func (mr *MedicalRecord) BeforeCreate(tx *gorm.DB) (err error) {

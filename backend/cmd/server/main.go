@@ -91,17 +91,18 @@ func main() {
 	api := router.Group("/api")
 	{
 		// Authentication routes
-		auth := api.Group("/auth")
+		authRoutes := api.Group("/auth")
 		{
-			auth.POST("/login", authHandler.Login)
-			auth.POST("/refresh", authHandler.RefreshToken)
-			auth.POST("/logout", auth.AuthMiddleware(jwtService), authHandler.Logout)
-			auth.GET("/me", auth.AuthMiddleware(jwtService), authHandler.GetCurrentUser)
+			authRoutes.POST("/login", authHandler.Login)
+			authRoutes.POST("/signup", authHandler.Signup)
+			authRoutes.POST("/refresh", authHandler.RefreshToken)
+			authRoutes.POST("/logout", auth.AuthMiddleware(jwtService), authHandler.Logout)
+			authRoutes.GET("/me", auth.AuthMiddleware(jwtService), authHandler.GetCurrentUser)
 			
 			// OAuth routes (if configured)
 			if oauthService.IsConfigured() {
-				auth.GET("/oauth/:provider", authHandler.OAuthLogin)
-				auth.GET("/oauth/callback", authHandler.OAuthCallback)
+				authRoutes.GET("/oauth/:provider", authHandler.OAuthLogin)
+				authRoutes.GET("/oauth/callback", authHandler.OAuthCallback)
 			}
 		}
 

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"time"
 
-	"healthsecure/internal/database"
 	"healthsecure/internal/models"
 
 	"gorm.io/gorm"

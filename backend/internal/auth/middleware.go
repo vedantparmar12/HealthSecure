@@ -134,7 +134,7 @@ func RequireRole(roles ...models.UserRole) gin.HandlerFunc {
 // RequireActiveUser ensures the user account is active
 func RequireActiveUser() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		userID, exists := c.Get("user_id")
+		_, exists := c.Get("user_id")
 		if !exists {
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"error": "User ID not found in context",

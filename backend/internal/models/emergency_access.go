@@ -17,16 +17,16 @@ const (
 )
 
 type EmergencyAccess struct {
-	ID          uint                  `json:"id" gorm:"primaryKey"`
-	UserID      uint                  `json:"user_id" gorm:"not null;index"`
-	PatientID   uint                  `json:"patient_id" gorm:"not null;index"`
+	ID          uint                  `json:"id" gorm:"primaryKey;type:bigint unsigned;autoIncrement"`
+	UserID      uint                  `json:"user_id" gorm:"not null;index;type:bigint unsigned"`
+	PatientID   uint                  `json:"patient_id" gorm:"not null;index;type:bigint unsigned"`
 	Reason      string                `json:"reason" gorm:"not null;type:text"`
 	AccessToken string                `json:"access_token" gorm:"unique;not null"`
 	Status      EmergencyAccessStatus `json:"status" gorm:"default:'pending';index"`
 	ExpiresAt   time.Time             `json:"expires_at" gorm:"not null;index"`
 	UsedAt      *time.Time            `json:"used_at,omitempty"`
 	RevokedAt   *time.Time            `json:"revoked_at,omitempty"`
-	RevokedBy   *uint                 `json:"revoked_by,omitempty"`
+	RevokedBy   *uint                 `json:"revoked_by,omitempty" gorm:"type:bigint unsigned"`
 	CreatedAt   time.Time             `json:"created_at"`
 
 	User      User  `json:"user,omitempty" gorm:"foreignKey:UserID"`

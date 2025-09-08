@@ -21,10 +21,10 @@ const (
 )
 
 type AuditLog struct {
-	ID           uint        `json:"id" gorm:"primaryKey"`
-	UserID       uint        `json:"user_id" gorm:"not null;index"`
-	PatientID    *uint       `json:"patient_id,omitempty" gorm:"index"`
-	RecordID     *uint       `json:"record_id,omitempty" gorm:"index"`
+	ID           uint        `json:"id" gorm:"primaryKey;type:bigint unsigned;autoIncrement"`
+	UserID       uint        `json:"user_id" gorm:"not null;index;type:bigint unsigned"`
+	PatientID    *uint       `json:"patient_id,omitempty" gorm:"index;type:bigint unsigned"`
+	RecordID     *uint       `json:"record_id,omitempty" gorm:"index;type:bigint unsigned"`
 	Action       AuditAction `json:"action" gorm:"not null;index"`
 	Resource     string      `json:"resource" gorm:"not null"`
 	IPAddress    string      `json:"ip_address" gorm:"not null"`

@@ -11,6 +11,13 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+type SignupRequest struct {
+	Email    string           `json:"email" binding:"required,email"`
+	Password string           `json:"password" binding:"required,min=8"`
+	Name     string           `json:"name" binding:"required"`
+	Role     models.UserRole  `json:"role" binding:"required,oneof=doctor nurse"`
+}
+
 type AuthHandler struct {
 	userService  *services.UserService
 	oauthService *auth.OAuthService
@@ -44,6 +51,57 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"message":       "Login successful",
+		"access_token":  tokens.AccessToken,
+		"refresh_token": tokens.RefreshToken,
+		"expires_at":    tokens.ExpiresAt,
+		"user":          tokens.User,
+	})
+}
+
+// Signup handles user registration
+func (h *AuthHandler) Signup(c *gin.Context) {
+	var req SignupRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Convert to CreateUserRequest
+	createReq := &services.CreateUserRequest{
+		Email:    req.Email,
+		Password: req.Password,
+		Name:     req.Name,
+		Role:     req.Role,
+	}
+
+	// Create user (using admin user ID 1 as creator, or system)
+	user, err := h.userService.CreateUser(createReq, 0) // 0 indicates system creation
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Auto-login the new user
+	loginReq := &services.LoginRequest{
+		Email:    req.Email,
+		Password: req.Password,
+	}
+
+	ipAddress := c.ClientIP()
+	userAgent := c.GetHeader("User-Agent")
+
+	tokens, err := h.userService.Login(loginReq, ipAddress, userAgent)
+	if err != nil {
+		// User created successfully but login failed, still return success
+		c.JSON(http.StatusCreated, gin.H{
+			"message": "Account created successfully. Please log in.",
+			"user":    user,
+		})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"message":       "Account created and logged in successfully",
 		"access_token":  tokens.AccessToken,
 		"refresh_token": tokens.RefreshToken,
 		"expires_at":    tokens.ExpiresAt,

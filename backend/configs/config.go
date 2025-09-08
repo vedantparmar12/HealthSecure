@@ -96,7 +96,7 @@ type MonitoringConfig struct {
 	MetricsPort int  `mapstructure:"metrics_port"`
 }
 
-var AppConfig *Config
+var GlobalConfig *Config
 
 func LoadConfig() (*Config, error) {
 	config := &Config{}
@@ -104,28 +104,35 @@ func LoadConfig() (*Config, error) {
 	// Set default values
 	setDefaults()
 
+	// Load from .env file if it exists
+	viper.SetConfigFile("../configs/.env")
+	viper.SetConfigType("env")
+	if err := viper.ReadInConfig(); err != nil {
+		log.Printf("Warning: Could not load .env file: %v", err)
+	}
+
 	// Read environment variables
 	viper.AutomaticEnv()
 
 	// Set config values from environment variables
 	config.Database = DatabaseConfig{
-		Host:     getEnv("DB_HOST", "localhost"),
-		Port:     getEnvAsInt("DB_PORT", 3306),
-		Name:     getEnv("DB_NAME", "healthsecure"),
-		User:     getEnv("DB_USER", "healthsecure_user"),
-		Password: getEnv("DB_PASSWORD", ""),
-		TLSMode:  getEnv("DB_TLS_MODE", "preferred"),
+		Host:     getViperString("DB_HOST", "localhost"),
+		Port:     getViperInt("DB_PORT", 3306),
+		Name:     getViperString("DB_NAME", "healthsecure"),
+		User:     getViperString("DB_USER", "root"),
+		Password: getViperString("DB_PASSWORD", ""),
+		TLSMode:  getViperString("DB_TLS_MODE", "preferred"),
 	}
 
 	config.Redis = RedisConfig{
-		Host:     getEnv("REDIS_HOST", "localhost"),
-		Port:     getEnvAsInt("REDIS_PORT", 6379),
-		Password: getEnv("REDIS_PASSWORD", ""),
-		DB:       getEnvAsInt("REDIS_DB", 0),
+		Host:     getViperString("REDIS_HOST", "localhost"),
+		Port:     getViperInt("REDIS_PORT", 6379),
+		Password: getViperString("REDIS_PASSWORD", ""),
+		DB:       getViperInt("REDIS_DB", 0),
 	}
 
 	config.JWT = JWTConfig{
-		Secret:              getEnv("JWT_SECRET", ""),
+		Secret:              getViperString("JWT_SECRET", ""),
 		Expires:             getEnvAsDuration("JWT_EXPIRES", "15m"),
 		RefreshTokenExpires: getEnvAsDuration("REFRESH_TOKEN_EXPIRES", "7d"),
 	}
@@ -170,7 +177,7 @@ func LoadConfig() (*Config, error) {
 		return nil, fmt.Errorf("configuration validation failed: %w", err)
 	}
 
-	AppConfig = config
+	GlobalConfig = config
 	return config, nil
 }
 
@@ -239,6 +246,20 @@ func validateConfig(config *Config) error {
 func getEnv(key, defaultVal string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
+	}
+	return defaultVal
+}
+
+func getViperString(key, defaultVal string) string {
+	if value := viper.GetString(key); value != "" {
+		return value
+	}
+	return defaultVal
+}
+
+func getViperInt(key string, defaultVal int) int {
+	if viper.IsSet(key) {
+		return viper.GetInt(key)
 	}
 	return defaultVal
 }

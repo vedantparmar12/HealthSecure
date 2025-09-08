@@ -78,7 +78,8 @@ func (s *UserService) Login(req *LoginRequest, ipAddress, userAgent string) (*au
 	}
 
 	// Update last login time
-	user.LastLogin = time.Now()
+	now := time.Now()
+	user.LastLogin = &now
 	s.db.Save(&user)
 
 	// Log successful login
