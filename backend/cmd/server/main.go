@@ -41,6 +41,7 @@ func main() {
 	patientService := services.NewPatientService(database.GetDB(), auditService)
 	medicalRecordService := services.NewMedicalRecordService(database.GetDB(), auditService)
 	emergencyService := services.NewEmergencyService(database.GetDB(), auditService, config)
+	chatThreadService := services.NewChatThreadService(database.GetDB(), auditService)
 
 	// Set Gin mode based on environment
 	if config.IsProduction() {
@@ -86,6 +87,7 @@ func main() {
 	emergencyHandler := handlers.NewEmergencyHandler(emergencyService, jwtService)
 	auditHandler := handlers.NewAuditHandler(auditService, jwtService)
 	adminHandler := handlers.NewAdminHandler(userService, auditService, jwtService)
+	langGraphChatHandler := handlers.NewLangGraphChatHandler(userService, patientService, auditService, chatThreadService, jwtService)
 
 	// API routes
 	api := router.Group("/api")
@@ -177,6 +179,18 @@ func main() {
 			profile.PUT("", authHandler.UpdateProfile)
 			profile.POST("/change-password", authHandler.ChangePassword)
 			profile.GET("/sessions", authHandler.GetUserSessions)
+		}
+
+		// LangGraph Chat routes
+		chat := api.Group("/chat")
+		chat.Use(auth.AuthMiddleware(jwtService))
+		{
+			chat.POST("/langgraph", langGraphChatHandler.ProcessChatMessage)
+			chat.POST("/threads", langGraphChatHandler.CreateThread)
+			chat.GET("/threads", langGraphChatHandler.GetThreads)
+			chat.GET("/threads/:thread_id/messages", langGraphChatHandler.GetThreadMessages)
+			chat.POST("/feedback", langGraphChatHandler.SubmitFeedback)
+			chat.GET("/feedback/stats", langGraphChatHandler.GetFeedbackStats)
 		}
 	}
 
