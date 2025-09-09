@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 	"time"
 
 	"healthsecure/internal/models"
@@ -56,9 +57,19 @@ func NewChatThreadService(db *gorm.DB, auditService *AuditService) *ChatThreadSe
 		auditService: auditService,
 	}
 
-	// Auto-migrate tables
+	// Auto-migrate tables with better error handling
 	if err := db.AutoMigrate(&ChatThread{}, &ChatMessage{}); err != nil {
-		log.Printf("Failed to migrate chat thread tables: %v", err)
+		log.Printf("Warning: Failed to migrate chat thread tables: %v", err)
+		
+		// Try to handle specific migration errors
+		if db.Error != nil {
+			log.Printf("Database connection error during migration: %v", db.Error)
+		}
+		
+		// Don't fail the service creation, but log the issue
+		log.Printf("Chat service will continue, but database tables may need manual creation")
+	} else {
+		log.Printf("Chat thread tables migrated successfully")
 	}
 
 	return service
@@ -75,19 +86,47 @@ func (s *ChatThreadService) GenerateThreadID() string {
 
 // CreateThread creates a new chat thread
 func (s *ChatThreadService) CreateThread(userID string, title string) (*ChatThread, error) {
-	threadID := s.GenerateThreadID()
-	
-	thread := &ChatThread{
-		ThreadID:  threadID,
-		UserID:    userID,
-		Title:     title,
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-		IsActive:  true,
+	// Validate input parameters
+	if userID == "" {
+		return nil, fmt.Errorf("user ID cannot be empty")
 	}
+	if title == "" {
+		title = "New Chat" // Default title
+	}
+	
+	var thread *ChatThread
+	var err error
+	
+	// Retry creation up to 3 times in case of thread ID collision
+	for attempts := 0; attempts < 3; attempts++ {
+		threadID := s.GenerateThreadID()
+		
+		thread = &ChatThread{
+			ThreadID:  threadID,
+			UserID:    userID,
+			Title:     title,
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+			IsActive:  true,
+		}
 
-	if err := s.db.Create(thread).Error; err != nil {
+		err = s.db.Create(thread).Error
+		if err == nil {
+			break // Success
+		}
+		
+		// Check if error is due to duplicate thread ID
+		if isDuplicateKeyError(err) {
+			log.Printf("Thread ID collision on attempt %d, retrying...", attempts+1)
+			continue
+		}
+		
+		// If it's not a duplicate key error, don't retry
 		return nil, fmt.Errorf("failed to create thread: %w", err)
+	}
+	
+	if err != nil {
+		return nil, fmt.Errorf("failed to create thread after 3 attempts: %w", err)
 	}
 
 	// Log thread creation
@@ -134,20 +173,50 @@ func (s *ChatThreadService) GetUserThreads(userID string, limit int) ([]ChatThre
 
 // SaveMessage saves a message to a thread
 func (s *ChatThreadService) SaveMessage(threadID, role, content, runID string) (*ChatMessage, error) {
-	// Generate unique message ID
-	messageID := s.generateMessageID()
-
-	message := &ChatMessage{
-		ThreadID:  threadID,
-		MessageID: messageID,
-		Role:      role,
-		Content:   content,
-		RunID:     runID,
-		CreatedAt: time.Now(),
+	// Validate input parameters
+	if threadID == "" {
+		return nil, fmt.Errorf("thread ID cannot be empty")
 	}
+	if role == "" {
+		return nil, fmt.Errorf("message role cannot be empty")
+	}
+	if content == "" {
+		return nil, fmt.Errorf("message content cannot be empty")
+	}
+	
+	var message *ChatMessage
+	var err error
+	
+	// Retry creation up to 3 times in case of message ID collision
+	for attempts := 0; attempts < 3; attempts++ {
+		messageID := s.generateMessageID()
 
-	if err := s.db.Create(message).Error; err != nil {
+		message = &ChatMessage{
+			ThreadID:  threadID,
+			MessageID: messageID,
+			Role:      role,
+			Content:   content,
+			RunID:     runID,
+			CreatedAt: time.Now(),
+		}
+
+		err = s.db.Create(message).Error
+		if err == nil {
+			break // Success
+		}
+		
+		// Check if error is due to duplicate message ID
+		if isDuplicateKeyError(err) {
+			log.Printf("Message ID collision on attempt %d, retrying...", attempts+1)
+			continue
+		}
+		
+		// If it's not a duplicate key error, don't retry
 		return nil, fmt.Errorf("failed to save message: %w", err)
+	}
+	
+	if err != nil {
+		return nil, fmt.Errorf("failed to save message after 3 attempts: %w", err)
 	}
 
 	// Update thread's updated_at timestamp
@@ -308,4 +377,33 @@ func (s *ChatThreadService) generateMessageID() string {
 		return fmt.Sprintf("msg_%d", time.Now().UnixNano())
 	}
 	return fmt.Sprintf("msg_%x", bytes)
+}
+
+// isDuplicateKeyError checks if the error is due to a duplicate key constraint
+func isDuplicateKeyError(err error) bool {
+	if err == nil {
+		return false
+	}
+	
+	errorStr := strings.ToLower(err.Error())
+	
+	// Check for various database duplicate key error messages
+	duplicateKeyIndicators := []string{
+		"duplicate key",
+		"duplicate entry",
+		"unique constraint",
+		"violates unique constraint",
+		"duplicate key value violates unique constraint",
+		"error 1062",       // MySQL duplicate entry error
+		"sqlite: unique",   // SQLite unique constraint error
+		"pq: duplicate",    // PostgreSQL duplicate key error
+	}
+	
+	for _, indicator := range duplicateKeyIndicators {
+		if strings.Contains(errorStr, indicator) {
+			return true
+		}
+	}
+	
+	return false
 }

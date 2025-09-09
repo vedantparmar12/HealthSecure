@@ -184,6 +184,7 @@ func main() {
 		// LangGraph Chat routes
 		chat := api.Group("/chat")
 		chat.Use(auth.AuthMiddleware(jwtService))
+		chat.Use(auth.ChatRateLimitMiddleware()) // Add chat-specific rate limiting
 		{
 			chat.POST("/langgraph", langGraphChatHandler.ProcessChatMessage)
 			chat.POST("/threads", langGraphChatHandler.CreateThread)

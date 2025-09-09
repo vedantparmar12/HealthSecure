@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/rand"
 	"net/http"
+	"sync"
 	"time"
 
 	"healthsecure/configs"
@@ -164,19 +165,154 @@ func DoctorOnly() gin.HandlerFunc {
 	return RequireRole(models.RoleDoctor)
 }
 
+// RateLimitState holds rate limiting information for a client
+type RateLimitState struct {
+	requests  int
+	resetTime time.Time
+	mutex     sync.Mutex
+}
+
+var (
+	rateLimitMap = make(map[string]*RateLimitState)
+	rateLimitMutex sync.RWMutex
+)
+
 // RateLimitMiddleware implements basic rate limiting
 func RateLimitMiddleware(config *configs.Config) gin.HandlerFunc {
-	// This is a simplified rate limiter
-	// In production, use a proper rate limiter like golang.org/x/time/rate
-	// or Redis-based rate limiting
+	maxRequests := config.Security.RateLimitRequests
+	windowDuration := config.Security.RateLimitWindow
+	
+	if maxRequests <= 0 {
+		maxRequests = 100 // default
+	}
+	if windowDuration <= 0 {
+		windowDuration = time.Hour // default
+	}
 	
 	return func(c *gin.Context) {
-		// Get client IP
 		clientIP := c.ClientIP()
+		userID, exists := c.Get("user_id")
 		
-		// Simple rate limiting logic would go here
-		// For now, just continue
-		_ = clientIP
+		// Use user ID if available, otherwise use IP
+		key := clientIP
+		if exists {
+			key = fmt.Sprintf("user_%v", userID)
+		}
+		
+		// Get or create rate limit state for this client
+		rateLimitMutex.RLock()
+		state, exists := rateLimitMap[key]
+		rateLimitMutex.RUnlock()
+		
+		if !exists {
+			rateLimitMutex.Lock()
+			state = &RateLimitState{
+				requests:  0,
+				resetTime: time.Now().Add(windowDuration),
+			}
+			rateLimitMap[key] = state
+			rateLimitMutex.Unlock()
+		}
+		
+		state.mutex.Lock()
+		defer state.mutex.Unlock()
+		
+		// Reset counter if window has expired
+		if time.Now().After(state.resetTime) {
+			state.requests = 0
+			state.resetTime = time.Now().Add(windowDuration)
+		}
+		
+		// Check if rate limit exceeded
+		if state.requests >= maxRequests {
+			// Set rate limit headers
+			c.Header("X-RateLimit-Limit", fmt.Sprintf("%d", maxRequests))
+			c.Header("X-RateLimit-Remaining", "0")
+			c.Header("X-RateLimit-Reset", fmt.Sprintf("%d", state.resetTime.Unix()))
+			
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"error": "Rate limit exceeded. Please try again later.",
+				"retry_after": int(time.Until(state.resetTime).Seconds()),
+			})
+			c.Abort()
+			return
+		}
+		
+		// Increment request counter
+		state.requests++
+		
+		// Set rate limit headers
+		c.Header("X-RateLimit-Limit", fmt.Sprintf("%d", maxRequests))
+		c.Header("X-RateLimit-Remaining", fmt.Sprintf("%d", maxRequests-state.requests))
+		c.Header("X-RateLimit-Reset", fmt.Sprintf("%d", state.resetTime.Unix()))
+		
+		c.Next()
+	}
+}
+
+// ChatRateLimitMiddleware implements stricter rate limiting for chat endpoints
+func ChatRateLimitMiddleware() gin.HandlerFunc {
+	// Chat-specific rate limiting: 10 requests per minute
+	maxRequests := 10
+	windowDuration := time.Minute
+	
+	return func(c *gin.Context) {
+		userID, exists := c.Get("user_id")
+		if !exists {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error": "Authentication required",
+			})
+			c.Abort()
+			return
+		}
+		
+		key := fmt.Sprintf("chat_user_%v", userID)
+		
+		// Get or create rate limit state for this user
+		rateLimitMutex.RLock()
+		state, exists := rateLimitMap[key]
+		rateLimitMutex.RUnlock()
+		
+		if !exists {
+			rateLimitMutex.Lock()
+			state = &RateLimitState{
+				requests:  0,
+				resetTime: time.Now().Add(windowDuration),
+			}
+			rateLimitMap[key] = state
+			rateLimitMutex.Unlock()
+		}
+		
+		state.mutex.Lock()
+		defer state.mutex.Unlock()
+		
+		// Reset counter if window has expired
+		if time.Now().After(state.resetTime) {
+			state.requests = 0
+			state.resetTime = time.Now().Add(windowDuration)
+		}
+		
+		// Check if rate limit exceeded
+		if state.requests >= maxRequests {
+			c.Header("X-RateLimit-Limit", fmt.Sprintf("%d", maxRequests))
+			c.Header("X-RateLimit-Remaining", "0")
+			c.Header("X-RateLimit-Reset", fmt.Sprintf("%d", state.resetTime.Unix()))
+			
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"error": "Chat rate limit exceeded. Please wait before sending another message.",
+				"retry_after": int(time.Until(state.resetTime).Seconds()),
+			})
+			c.Abort()
+			return
+		}
+		
+		// Increment request counter
+		state.requests++
+		
+		// Set rate limit headers
+		c.Header("X-RateLimit-Limit", fmt.Sprintf("%d", maxRequests))
+		c.Header("X-RateLimit-Remaining", fmt.Sprintf("%d", maxRequests-state.requests))
+		c.Header("X-RateLimit-Reset", fmt.Sprintf("%d", state.resetTime.Unix()))
 		
 		c.Next()
 	}
