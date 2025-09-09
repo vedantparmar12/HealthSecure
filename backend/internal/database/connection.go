@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"healthsecure/configs"
@@ -26,11 +27,11 @@ func Initialize(config *configs.Config) error {
 	var gormConfig *gorm.Config
 	if config.IsProduction() {
 		gormConfig = &gorm.Config{
-			Logger: logger.Default.LogMode(logger.Error),
+			Logger: logger.Default.LogMode(logger.Silent),
 		}
 	} else {
 		gormConfig = &gorm.Config{
-			Logger: logger.Default.LogMode(logger.Warn),
+			Logger: logger.Default.LogMode(logger.Error),
 		}
 	}
 
@@ -117,9 +118,14 @@ func runMigrations() error {
 		&SecurityEvent{},
 	}
 
-	// Run migrations
+	// Run migrations with error handling for duplicate indexes
 	for _, model := range modelsToMigrate {
 		if err := DB.AutoMigrate(model); err != nil {
+			// Check if it's a duplicate key error (which we can ignore)
+			if strings.Contains(err.Error(), "Duplicate key name") || strings.Contains(err.Error(), "already exists") {
+				log.Printf("Warning: Index already exists for %T, skipping: %v", model, err)
+				continue
+			}
 			return fmt.Errorf("failed to migrate %T: %w", model, err)
 		}
 	}
