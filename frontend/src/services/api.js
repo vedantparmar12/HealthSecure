@@ -138,6 +138,16 @@ export const adminAPI = {
   getDashboardStats: () => api.get('/admin/dashboard/stats'),
 };
 
+// Chat API
+export const chatAPI = {
+  sendMessage: (data) => api.post('/chat/langgraph', data),
+  createThread: (data) => api.post('/chat/threads', data),
+  getThreads: () => api.get('/chat/threads'),
+  getThreadMessages: (threadId) => api.get(`/chat/threads/${threadId}/messages`),
+  submitFeedback: (data) => api.post('/chat/feedback', data),
+  getFeedbackStats: () => api.get('/chat/feedback/stats'),
+};
+
 // Error handler utility
 export const handleAPIError = (error) => {
   if (error.response) {

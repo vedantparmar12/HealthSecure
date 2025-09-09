@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"html"
 	"log"
 	"net/http"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -114,6 +116,47 @@ func NewLangGraphChatHandler(userService *services.UserService, patientService *
 	}
 }
 
+// sanitizeUserInput cleans and validates user input to prevent injection attacks
+func (h *LangGraphChatHandler) sanitizeUserInput(input string) (string, error) {
+	// Remove null bytes and control characters
+	re := regexp.MustCompile(`[\x00-\x1f\x7f]`)
+	cleaned := re.ReplaceAllString(input, "")
+	
+	// HTML escape the input
+	cleaned = html.EscapeString(cleaned)
+	
+	// Trim whitespace
+	cleaned = strings.TrimSpace(cleaned)
+	
+	// Check length limits
+	if len(cleaned) == 0 {
+		return "", fmt.Errorf("message cannot be empty")
+	}
+	if len(cleaned) > 4000 {
+		return "", fmt.Errorf("message too long (maximum 4000 characters)")
+	}
+	
+	// Check for potentially malicious patterns
+	suspiciousPatterns := []string{
+		`<script`,
+		`javascript:`,
+		`data:text/html`,
+		`vbscript:`,
+		`onload=`,
+		`onerror=`,
+	}
+	
+	lowerInput := strings.ToLower(cleaned)
+	for _, pattern := range suspiciousPatterns {
+		if strings.Contains(lowerInput, pattern) {
+			log.Printf("Blocked potentially malicious input containing: %s", pattern)
+			return "", fmt.Errorf("message contains prohibited content")
+		}
+	}
+	
+	return cleaned, nil
+}
+
 func (h *LangGraphChatHandler) ProcessChatMessage(c *gin.Context) {
 	var req ChatRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -122,6 +165,16 @@ func (h *LangGraphChatHandler) ProcessChatMessage(c *gin.Context) {
 		})
 		return
 	}
+
+	// Sanitize user input
+	sanitizedMessage, err := h.sanitizeUserInput(req.Message)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+	req.Message = sanitizedMessage
 
 	// Get current user from JWT token
 	userID, exists := c.Get("user_id")
@@ -290,7 +343,14 @@ Remember: You are helping healthcare professionals efficiently and securely mana
 func (h *LangGraphChatHandler) callOpenRouter(systemPrompt, userMessage string) (string, error) {
 	apiKey := os.Getenv("OPENROUTER_API_KEY")
 	if apiKey == "" {
-		return "", fmt.Errorf("OpenRouter API key not configured")
+		log.Printf("Critical Error: OPENROUTER_API_KEY environment variable is not set")
+		return "", fmt.Errorf("AI service configuration error: API key not configured. Please contact your administrator")
+	}
+	
+	// Validate API key format (basic check)
+	if len(apiKey) < 20 {
+		log.Printf("Error: OPENROUTER_API_KEY appears to be invalid (too short)")
+		return "", fmt.Errorf("AI service configuration error: invalid API key format")
 	}
 
 	// Prepare the request
@@ -324,20 +384,36 @@ func (h *LangGraphChatHandler) callOpenRouter(systemPrompt, userMessage string) 
 	req.Header.Set("HTTP-Referer", "https://healthsecure.local")
 	req.Header.Set("X-Title", "HealthSecure Medical Assistant")
 
-	client := &http.Client{}
+	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("failed to make request: %w", err)
+		log.Printf("Network error calling OpenRouter API: %v", err)
+		return "", fmt.Errorf("failed to connect to AI service - please check your internet connection")
 	}
 	defer resp.Body.Close()
 
+	// Check HTTP status code
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("OpenRouter API returned status %d", resp.StatusCode)
+		if resp.StatusCode == 401 {
+			return "", fmt.Errorf("AI service authentication failed - invalid API key")
+		} else if resp.StatusCode == 429 {
+			return "", fmt.Errorf("AI service rate limit exceeded - please try again later")
+		} else if resp.StatusCode >= 500 {
+			return "", fmt.Errorf("AI service is temporarily unavailable - please try again later")
+		}
+		return "", fmt.Errorf("AI service error (status %d) - please try again", resp.StatusCode)
+	}
+
 	var response OpenRouterResponse
 	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-		return "", fmt.Errorf("failed to decode response: %w", err)
+		log.Printf("Failed to decode OpenRouter response: %v", err)
+		return "", fmt.Errorf("received invalid response from AI service")
 	}
 
 	if response.Error.Message != "" {
-		return "", fmt.Errorf("OpenRouter API error: %s", response.Error.Message)
+		log.Printf("OpenRouter API error: %s (%s)", response.Error.Message, response.Error.Type)
+		return "", fmt.Errorf("AI service error: %s", response.Error.Message)
 	}
 
 	if len(response.Choices) == 0 {
@@ -350,7 +426,14 @@ func (h *LangGraphChatHandler) callOpenRouter(systemPrompt, userMessage string) 
 func (h *LangGraphChatHandler) callOpenRouterWithHistory(systemPrompt, userMessage string, history []services.ChatMessage) (string, error) {
 	apiKey := os.Getenv("OPENROUTER_API_KEY")
 	if apiKey == "" {
-		return "", fmt.Errorf("OpenRouter API key not configured")
+		log.Printf("Critical Error: OPENROUTER_API_KEY environment variable is not set")
+		return "", fmt.Errorf("AI service configuration error: API key not configured. Please contact your administrator")
+	}
+	
+	// Validate API key format (basic check)
+	if len(apiKey) < 20 {
+		log.Printf("Error: OPENROUTER_API_KEY appears to be invalid (too short)")
+		return "", fmt.Errorf("AI service configuration error: invalid API key format")
 	}
 
 	// Build conversation history
@@ -404,20 +487,36 @@ func (h *LangGraphChatHandler) callOpenRouterWithHistory(systemPrompt, userMessa
 	req.Header.Set("HTTP-Referer", "https://healthsecure.local")
 	req.Header.Set("X-Title", "HealthSecure Medical Assistant")
 
-	client := &http.Client{}
+	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("failed to make request: %w", err)
+		log.Printf("Network error calling OpenRouter API: %v", err)
+		return "", fmt.Errorf("failed to connect to AI service - please check your internet connection")
 	}
 	defer resp.Body.Close()
 
+	// Check HTTP status code
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("OpenRouter API returned status %d", resp.StatusCode)
+		if resp.StatusCode == 401 {
+			return "", fmt.Errorf("AI service authentication failed - invalid API key")
+		} else if resp.StatusCode == 429 {
+			return "", fmt.Errorf("AI service rate limit exceeded - please try again later")
+		} else if resp.StatusCode >= 500 {
+			return "", fmt.Errorf("AI service is temporarily unavailable - please try again later")
+		}
+		return "", fmt.Errorf("AI service error (status %d) - please try again", resp.StatusCode)
+	}
+
 	var response OpenRouterResponse
 	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-		return "", fmt.Errorf("failed to decode response: %w", err)
+		log.Printf("Failed to decode OpenRouter response: %v", err)
+		return "", fmt.Errorf("received invalid response from AI service")
 	}
 
 	if response.Error.Message != "" {
-		return "", fmt.Errorf("OpenRouter API error: %s", response.Error.Message)
+		log.Printf("OpenRouter API error: %s (%s)", response.Error.Message, response.Error.Type)
+		return "", fmt.Errorf("AI service error: %s", response.Error.Message)
 	}
 
 	if len(response.Choices) == 0 {
