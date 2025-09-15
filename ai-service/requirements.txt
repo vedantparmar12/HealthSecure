@@ -1,0 +1,26 @@
+# HealthSecure AI Service Dependencies
+# Core web framework
+flask
+flask-cors
+requests
+
+# LangChain core components
+langchain
+langchain-core
+langchain-community
+langchain-openai
+
+# LangSmith integration
+langsmith
+
+# Database support for chat history
+sqlalchemy
+
+# Utilities
+python-dotenv
+uuid
+dataclasses
+
+# Production server (optional)
+gunicorn
+waitress

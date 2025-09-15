@@ -1,0 +1,211 @@
+version: '3.8'
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: healthsecure-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root_password_change_in_production
+      MYSQL_DATABASE: healthsecure
+      MYSQL_USER: healthsecure_user
+      MYSQL_PASSWORD: secure_password_change_in_production
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+      - ./database/seed_data.sql:/docker-entrypoint-initdb.d/02-seed-data.sql
+    command: --default-authentication-plugin=mysql_native_password --sql-mode=STRICT_TRANS_TABLES,NO_ZERO_AUTO_INCREMENT_VALUE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+
+  redis:
+    image: redis:6.2-alpine
+    container_name: healthsecure-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --requirepass redis_password_change_in_production
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: ../docker/Dockerfile.backend
+    container_name: healthsecure-backend
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      # Database configuration
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_NAME: healthsecure
+      DB_USER: healthsecure_user
+      DB_PASSWORD: secure_password_change_in_production
+      DB_TLS_MODE: preferred
+      
+      # Redis configuration
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: redis_password_change_in_production
+      REDIS_DB: 0
+      
+      # JWT configuration
+      JWT_SECRET: super-secure-jwt-secret-minimum-32-characters-change-in-production-please
+      JWT_EXPIRES: 15m
+      REFRESH_TOKEN_EXPIRES: 7d
+      
+      # Security configuration
+      BCRYPT_COST: 12
+      RATE_LIMIT_REQUESTS: 100
+      RATE_LIMIT_WINDOW: 1h
+      
+      # Emergency access configuration
+      EMERGENCY_ACCESS_DURATION: 1h
+      EMERGENCY_NOTIFICATION_EMAIL: security@yourorg.com
+      
+      # Application configuration
+      SERVER_PORT: 8080
+      ENVIRONMENT: production
+      LOG_LEVEL: info
+      ENABLE_CORS: "true"
+      CORS_ORIGINS: http://localhost:3000,https://yourdomain.com
+      
+      # Monitoring configuration
+      METRICS_ENABLED: "true"
+      METRICS_PORT: 9090
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ai-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    volumes:
+      - ./logs:/app/logs
+
+  ai-service:
+    build:
+      context: ./ai-service
+      dockerfile: Dockerfile
+    container_name: healthsecure-ai-service
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      - AI_SERVICE_PORT=5000
+      - ENVIRONMENT=production
+    volumes:
+      - ./configs/.env:/app/.env:ro
+    depends_on:
+      - mysql
+      - redis
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: ../docker/Dockerfile.frontend
+    container_name: healthsecure-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      REACT_APP_API_URL: http://localhost:8080/api
+      REACT_APP_ENVIRONMENT: production
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  nginx:
+    image: nginx:alpine
+    container_name: healthsecure-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./configs/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - backend
+      - frontend
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Optional: Monitoring stack
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: healthsecure-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    profiles:
+      - monitoring
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: healthsecure-grafana
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin_password_change_in_production
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+    depends_on:
+      - prometheus
+    profiles:
+      - monitoring
+
+volumes:
+  mysql_data:
+    driver: local
+  redis_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+networks:
+  default:
+    name: healthsecure-network
+    driver: bridge
