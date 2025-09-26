@@ -25,7 +25,7 @@ type MedicalRecord struct {
 	Treatment   string        `json:"treatment" gorm:"type:text"`
 	Notes       string        `json:"notes" gorm:"type:text"`
 	Medications string        `json:"medications" gorm:"type:text"`
-	Severity    SeverityLevel `json:"severity" gorm:"type:enum('low','medium','high','critical')"`
+	Severity    SeverityLevel `json:"severity" gorm:"type:varchar(20)"`
 	CreatedAt   time.Time     `json:"created_at"`
 	UpdatedAt   time.Time     `json:"updated_at"`
 }

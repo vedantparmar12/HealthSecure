@@ -1,4 +1,4 @@
-# HealthSecure AI Service Dependencies
+# HealthSecure AI Service Dependencies with AG-UI Support
 # Core web framework
 flask
 flask-cors
@@ -10,16 +10,34 @@ langchain-core
 langchain-community
 langchain-openai
 
+# LangGraph for AG-UI agent routing
+langgraph
+
 # LangSmith integration
 langsmith
 
-# Database support for chat history
+# AG-UI RAG dependencies
+pydantic
+PyPDF2
+qdrant-client
+sentence-transformers
+faiss-cpu
+
+# Ollama support for local models
+ollama
+
+# Web search dependencies
+beautifulsoup4
+duckduckgo-search
+google-search-results
+
+# Database support
 sqlalchemy
+pymysql
 
 # Utilities
 python-dotenv
-uuid
-dataclasses
+typing-extensions
 
 # Production server (optional)
 gunicorn

@@ -380,3 +380,26 @@ func (s *UserService) ValidateUserPermissions(userID uint, action string, resour
 
 	return false, nil
 }
+
+// GetDefaultUsersByRole returns the first user for each role for login defaults
+func (s *UserService) GetDefaultUsersByRole() (map[string]map[string]string, error) {
+	defaults := make(map[string]map[string]string)
+
+	roles := []models.UserRole{models.RoleDoctor, models.RoleNurse, models.RoleAdmin}
+
+	for _, role := range roles {
+		var user models.User
+		if err := s.db.Where("role = ? AND active = ?", role, true).First(&user).Error; err != nil {
+			// If no user found for this role, skip it
+			continue
+		}
+
+		roleStr := string(role)
+		defaults[roleStr] = map[string]string{
+			"email": user.Email,
+			"password": "Doctor123", // Return the known default password for demo
+		}
+	}
+
+	return defaults, nil
+}

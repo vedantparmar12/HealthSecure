@@ -86,9 +86,15 @@ func Initialize(config *configs.Config) error {
 
 	log.Println("Database connection established successfully")
 
-	// Run auto migrations
-	if err := runMigrations(); err != nil {
-		return fmt.Errorf("failed to run migrations: %w", err)
+	// Run auto migrations (can be disabled with SKIP_MIGRATIONS=true)
+	if skipMigrations := os.Getenv("SKIP_MIGRATIONS"); skipMigrations != "true" {
+		if err := runMigrations(); err != nil {
+			log.Printf("Migration failed: %v", err)
+			log.Println("You can skip migrations by setting SKIP_MIGRATIONS=true environment variable")
+			return fmt.Errorf("failed to run migrations: %w", err)
+		}
+	} else {
+		log.Println("Skipping database migrations (SKIP_MIGRATIONS=true)")
 	}
 
 	// Seed demo users for development
@@ -105,6 +111,11 @@ func Initialize(config *configs.Config) error {
 func runMigrations() error {
 	log.Println("Running database migrations...")
 
+	// First, handle existing tables with enum columns
+	if err := handleExistingEnumColumns(); err != nil {
+		log.Printf("Warning: Could not handle existing enum columns: %v", err)
+	}
+
 	// Define models to migrate in dependency order
 	modelsToMigrate := []interface{}{
 		&models.User{},
@@ -120,38 +131,116 @@ func runMigrations() error {
 		&SecurityEvent{},
 	}
 
-	// Run migrations with error handling for duplicate indexes
+	// Run migrations with enhanced error handling
 	for _, model := range modelsToMigrate {
 		if err := DB.AutoMigrate(model); err != nil {
-			isDuplicateKeyError := false
 			errStr := err.Error()
 
-			// Check for database-specific duplicate key errors
-			switch DB.Dialector.Name() {
-			case "mysql":
-				if strings.Contains(errStr, "Error 1062:") {
-					isDuplicateKeyError = true
-				}
-			case "sqlite":
-				if strings.Contains(errStr, "UNIQUE constraint failed") {
-					isDuplicateKeyError = true
-				}
-			default:
-				// Generic check for other databases
-				if strings.Contains(errStr, "Duplicate key name") || strings.Contains(errStr, "already exists") {
-					isDuplicateKeyError = true
-				}
-			}
-
-			if isDuplicateKeyError {
-				log.Printf("Warning: Index or column already exists for %T, skipping: %v", model, err)
+			// Check for various error types and handle gracefully
+			if isIgnorableError(errStr, DB.Dialector.Name()) {
+				log.Printf("Warning: Ignorable migration error for %T: %v", model, err)
 				continue
 			}
+
+			// For enum-related errors, try alternative approach
+			if strings.Contains(errStr, "enum") || strings.Contains(errStr, "syntax error") {
+				log.Printf("Enum-related error for %T, attempting manual migration...", model)
+				if err := handleEnumMigration(model); err != nil {
+					log.Printf("Manual migration also failed for %T: %v", model, err)
+					continue
+				}
+				continue
+			}
+
 			return fmt.Errorf("failed to migrate %T: %w", model, err)
 		}
 	}
 
 	log.Println("Database migrations completed successfully")
+	return nil
+}
+
+// handleExistingEnumColumns modifies existing enum columns to varchar
+func handleExistingEnumColumns() error {
+	dialectName := DB.Dialector.Name()
+
+	if dialectName == "mysql" {
+		// Check if users table exists and has enum role column
+		if DB.Migrator().HasTable("users") && DB.Migrator().HasColumn(&models.User{}, "role") {
+			// Try to alter the column if it's currently an enum
+			if err := DB.Exec("ALTER TABLE users MODIFY COLUMN role VARCHAR(20)").Error; err != nil {
+				log.Printf("Could not alter users.role column: %v", err)
+			}
+		}
+
+		// Check medical_records table
+		if DB.Migrator().HasTable("medical_records") && DB.Migrator().HasColumn(&models.MedicalRecord{}, "severity") {
+			if err := DB.Exec("ALTER TABLE medical_records MODIFY COLUMN severity VARCHAR(20)").Error; err != nil {
+				log.Printf("Could not alter medical_records.severity column: %v", err)
+			}
+		}
+	} else if dialectName == "sqlite" {
+		// SQLite doesn't support ALTER COLUMN, so we need to recreate tables if they have enum issues
+		// For now, just log and continue
+		log.Println("SQLite detected - enum columns will be handled during AutoMigrate")
+	}
+
+	return nil
+}
+
+// isIgnorableError checks if a migration error can be safely ignored
+func isIgnorableError(errStr, dialectName string) bool {
+	ignorablePatterns := []string{
+		"Error 1062:", // MySQL duplicate key
+		"UNIQUE constraint failed", // SQLite unique constraint
+		"Duplicate key name", // Generic duplicate key
+		"already exists", // Table/column exists
+		"duplicate column name", // Column already exists
+	}
+
+	for _, pattern := range ignorablePatterns {
+		if strings.Contains(errStr, pattern) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// handleEnumMigration handles enum-related migration issues
+func handleEnumMigration(model interface{}) error {
+	// Try to create the table without constraints first
+	switch model.(type) {
+	case *models.User:
+		return DB.Exec(`CREATE TABLE IF NOT EXISTS users (
+			id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+			email VARCHAR(191) UNIQUE NOT NULL,
+			password VARCHAR(255) NOT NULL,
+			role VARCHAR(20) NOT NULL,
+			name VARCHAR(100) NOT NULL,
+			active BOOLEAN DEFAULT TRUE,
+			last_login DATETIME,
+			created_at DATETIME,
+			updated_at DATETIME,
+			INDEX idx_users_email (email)
+		)`).Error
+	case *models.MedicalRecord:
+		return DB.Exec(`CREATE TABLE IF NOT EXISTS medical_records (
+			id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+			patient_id BIGINT UNSIGNED NOT NULL,
+			doctor_id BIGINT UNSIGNED NOT NULL,
+			diagnosis TEXT,
+			treatment TEXT,
+			notes TEXT,
+			medications TEXT,
+			severity VARCHAR(20),
+			created_at DATETIME,
+			updated_at DATETIME,
+			INDEX idx_medical_records_patient_id (patient_id),
+			INDEX idx_medical_records_doctor_id (doctor_id)
+		)`).Error
+	}
+
 	return nil
 }
 

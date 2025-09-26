@@ -303,6 +303,17 @@ func (h *AuthHandler) GetSupportedOAuthProviders(c *gin.Context) {
 	})
 }
 
+// GetDefaultUsers returns default user credentials for each role
+func (h *AuthHandler) GetDefaultUsers(c *gin.Context) {
+	defaults, err := h.userService.GetDefaultUsersByRole()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch default users"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"defaults": defaults})
+}
+
 // Helper function to get pagination parameters
 func getPaginationParams(c *gin.Context) (page int, limit int) {
 	page = 1

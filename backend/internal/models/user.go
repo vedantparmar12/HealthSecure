@@ -18,7 +18,7 @@ type User struct {
 	ID        uint      `json:"id" gorm:"primaryKey;type:bigint unsigned;autoIncrement"`
 	Email     string    `json:"email" gorm:"type:varchar(191);unique;not null;index"`
 	Password  string    `json:"-" gorm:"type:varchar(255);not null"`
-	Role      UserRole  `json:"role" gorm:"not null;type:enum('doctor','nurse','admin')"`
+	Role      UserRole  `json:"role" gorm:"not null;type:varchar(20)"`
 	Name      string    `json:"name" gorm:"type:varchar(100);not null"`
 	Active    bool      `json:"active" gorm:"default:true"`
 	LastLogin *time.Time `json:"last_login"`

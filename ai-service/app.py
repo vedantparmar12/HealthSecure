@@ -30,6 +30,29 @@ import langsmith
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Ollama web search tools integration
+try:
+    from ollama_web_search_tools import ollama_web_search_tools, test_ollama_api_key
+    WEB_SEARCH_AVAILABLE = test_ollama_api_key()
+    if WEB_SEARCH_AVAILABLE:
+        logger.info("Ollama web search tools loaded and API key verified")
+    else:
+        logger.warning("Ollama web search tools loaded but API key not configured")
+except ImportError as e:
+    logger.warning(f"Ollama web search tools not available: {e}")
+    ollama_web_search_tools = []
+    WEB_SEARCH_AVAILABLE = False
+
+# AG-UI RAG Agent integration
+try:
+    from true_agui_agent import TrueAGUIAgent
+    AGUI_AVAILABLE = True
+    logger.info("AG-UI RAG Agent integration enabled")
+except ImportError as e:
+    logger.warning(f"AG-UI RAG Agent not available: {e}")
+    TrueAGUIAgent = None
+    AGUI_AVAILABLE = False
+
 # Initialize Flask app
 app = Flask(__name__)
 CORS(app)
@@ -67,11 +90,11 @@ for env_file_path in env_file_paths:
 
 # Configuration
 class Config:
-    OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-    LANGCHAIN_API_KEY = os.getenv("LANGCHAIN_API_KEY") 
+    OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "your-openrouter-api-key")
+    LANGCHAIN_API_KEY = os.getenv("LANGCHAIN_API_KEY")
     LANGCHAIN_PROJECT = os.getenv("LANGCHAIN_PROJECT", "healthsecure-ai")
     LANGCHAIN_TRACING_V2 = os.getenv("LANGCHAIN_TRACING_V2", "true").lower() == "true"
-    MODEL_NAME = "openai/gpt-3.5-turbo"
+    MODEL_NAME = os.getenv("MODEL_NAME", "gpt-oss:20b-cloud")  # Use gpt-oss:20b-cloud by default
     MAX_TOKENS = 1000
     TEMPERATURE = 0.7
 
@@ -129,7 +152,8 @@ def get_all_patients():
         logger.error(f"Error getting patients: {e}")
         return f"Error getting patients: {e}"
 
-tools = [get_all_patients]
+# Combine all available tools
+tools = [get_all_patients] + ollama_web_search_tools
 
 # Initialize OpenAI via OpenRouter
 def create_llm():
@@ -160,6 +184,9 @@ CAPABILITIES:
 - Healthcare protocol guidance and recommendations
 - General medical knowledge and best practices
 - Emergency procedure assistance
+- Ollama web search for latest medical research and guidelines
+- Real-time information retrieval from the internet
+- Evidence-based medicine with current research access
 
 IMPORTANT GUIDELINES:
 - Always maintain HIPAA compliance and patient confidentiality
@@ -239,6 +266,16 @@ def generate_thread_title(history: List[Dict[str, Any]], new_message: str) -> st
 # Initialize the conversation chain globally
 agent_executor = create_agent()
 
+# Initialize AG-UI Agent if available
+agui_agent = None
+if AGUI_AVAILABLE:
+    try:
+        agui_agent = TrueAGUIAgent()
+        logger.info("AG-UI RAG Agent initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize AG-UI agent: {e}")
+        agui_agent = None
+
 @app.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
@@ -246,7 +283,11 @@ def health_check():
         "status": "healthy",
         "service": "HealthSecure AI Service",
         "langsmith_enabled": Config.LANGCHAIN_TRACING_V2,
+        "ollama_web_search_enabled": WEB_SEARCH_AVAILABLE,
+        "agui_enabled": AGUI_AVAILABLE,
         "model": Config.MODEL_NAME,
+        "tools_available": len(tools),
+        "search_provider": "ollama" if WEB_SEARCH_AVAILABLE else "none",
         "timestamp": datetime.now().isoformat()
     })
 
@@ -347,6 +388,83 @@ def list_threads():
     return jsonify({
         "threads": [],
         "message": "Thread listing requires database integration"
+    })
+
+@app.route('/agui/chat', methods=['POST'])
+def agui_chat():
+    """AG-UI enhanced chat endpoint with dynamic frontend modification capabilities"""
+    if not agui_agent:
+        return jsonify({
+            "error": "AG-UI functionality not available",
+            "fallback_to": "/chat"
+        }), 503
+
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No JSON data provided"}), 400
+
+        query = data.get('message', '')
+        user_info = {
+            "user_id": data.get('user_id', ''),
+            "user_name": data.get('user_name', 'Unknown User'),
+            "user_role": data.get('user_role', 'admin')
+        }
+        thread_id = data.get('thread_id', f"agui_{uuid.uuid4().hex[:8]}")
+
+        if not query.strip():
+            return jsonify({"error": "Message cannot be empty"}), 400
+
+        # Process with AG-UI agent using asyncio.run to handle async call
+        logger.info(f"AG-UI processing: {query} for user {user_info['user_name']}")
+        import asyncio
+        try:
+            result = asyncio.run(agui_agent.process_query(query, user_info, thread_id))
+        except RuntimeError:
+            # If there's already an event loop running, create a new thread
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(lambda: asyncio.run(agui_agent.process_query(query, user_info, thread_id)))
+                result = future.result()
+
+        if result["success"]:
+            return jsonify({
+                "response": result["response"],
+                "thread_id": result["thread_id"],
+                "route": result.get("route", "unknown"),
+                "agui_state": result.get("agui_state", {}),
+                "model_used": "AG-UI Enhanced",
+                "success": True
+            })
+        else:
+            return jsonify({
+                "error": "AG-UI processing failed",
+                "details": result.get("error", "Unknown error"),
+                "fallback_response": result.get("response", ""),
+                "success": False
+            }), 500
+
+    except Exception as e:
+        logger.error(f"AG-UI chat error: {str(e)}", exc_info=True)
+        return jsonify({
+            "error": "Failed to process AG-UI chat message",
+            "details": str(e),
+            "success": False
+        }), 500
+
+@app.route('/agui/state', methods=['GET'])
+def get_agui_state():
+    """Get current AG-UI state for frontend synchronization"""
+    if not agui_agent:
+        return jsonify({"error": "AG-UI functionality not available"}), 503
+
+    # In a real implementation, this would fetch the current state from storage
+    return jsonify({
+        "ui_components": [],
+        "layout_config": {},
+        "theme_config": {},
+        "current_activity": None,
+        "activity_progress": 0.0
     })
 
 @app.errorhandler(404)

@@ -102,7 +102,8 @@ func main() {
 			authRoutes.POST("/refresh", authHandler.RefreshToken)
 			authRoutes.POST("/logout", auth.AuthMiddleware(jwtService), authHandler.Logout)
 			authRoutes.GET("/me", auth.AuthMiddleware(jwtService), authHandler.GetCurrentUser)
-			
+			authRoutes.GET("/defaults", authHandler.GetDefaultUsers)
+
 			// OAuth routes (if configured)
 			if oauthService.IsConfigured() {
 				authRoutes.GET("/oauth/:provider", authHandler.OAuthLogin)

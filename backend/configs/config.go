@@ -117,7 +117,11 @@ func LoadConfig() (*Config, error) {
 	viper.SetConfigFile("../configs/.env")
 	viper.SetConfigType("env")
 	if err := viper.ReadInConfig(); err != nil {
-		log.Printf("Warning: Could not load .env file: %v", err)
+		// Try alternative path
+		viper.SetConfigFile("./configs/.env")
+		if err2 := viper.ReadInConfig(); err2 != nil {
+			log.Printf("Warning: Could not load .env file from ../configs/.env or ./configs/.env: %v, %v", err, err2)
+		}
 	}
 
 	// Read environment variables
@@ -348,11 +352,12 @@ func (c *Config) GetDatabaseDSN() string {
 		c.Database.Port,
 		c.Database.Name,
 	)
-	
-	if c.Database.TLSMode != "" {
+
+	// Handle TLS configuration
+	if c.Database.TLSMode != "" && c.Database.TLSMode != "preferred" {
 		dsn += "&tls=" + c.Database.TLSMode
 	}
-	
+
 	return dsn
 }
 
