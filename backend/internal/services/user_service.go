@@ -395,9 +395,26 @@ func (s *UserService) GetDefaultUsersByRole() (map[string]map[string]string, err
 		}
 
 		roleStr := string(role)
+		password := "Doctor123" // Default password for doctor
+
+		// Set password based on role (matching database seed)
+		switch role {
+		case models.RoleNurse:
+			password = "Nurse123"
+		case models.RoleAdmin:
+			password = "admin123"
+		case models.RoleDoctor:
+			password = "Doctor123"
+		}
+
+		// Special case for custom users
+		if user.Email == "vedantparmar@gmail.com" {
+			password = "Vedant1234"
+		}
+
 		defaults[roleStr] = map[string]string{
-			"email": user.Email,
-			"password": "Doctor123", // Return the known default password for demo
+			"email":    user.Email,
+			"password": password,
 		}
 	}
 

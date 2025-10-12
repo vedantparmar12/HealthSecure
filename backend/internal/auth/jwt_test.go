@@ -1,18 +1,61 @@
 package auth
 
 import (
+	"os"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"healthsecure/configs"
+	"healthsecure/internal/database"
 	"healthsecure/internal/models"
 )
 
-func TestJWTService(t *testing.T) {
-	jwtService := NewJWTService("test-secret-key-for-testing", 15*time.Minute, 24*time.Hour)
+func setupTestDB() (*configs.Config, error) {
+	config := &configs.Config{
+		Database: configs.DatabaseConfig{
+			Host:     "localhost",
+			Port:     3306,
+			Name:     "test_db",
+			User:     "test",
+			Password: "",
+			TLSMode:  "preferred",
+		},
+		JWT: configs.JWTConfig{
+			Secret:              "test-secret-key-for-testing-minimum-32-chars",
+			Expires:             15 * time.Minute,
+			RefreshTokenExpires: 24 * time.Hour,
+		},
+		Security: configs.SecurityConfig{
+			BCryptCost: 10,
+		},
+		App: configs.AppConfig{
+			Environment: "test",
+		},
+	}
 
-	t.Run("GenerateAccessToken", func(t *testing.T) {
+	// Skip migrations for faster tests
+	os.Setenv("SKIP_MIGRATIONS", "false")
+
+	// Initialize test database
+	if err := database.Initialize(config); err != nil {
+		return nil, err
+	}
+
+	return config, nil
+}
+
+func TestJWTService(t *testing.T) {
+	config, err := setupTestDB()
+	if err != nil {
+		t.Fatalf("Failed to setup test database: %v", err)
+	}
+	defer database.Close()
+
+	jwtService := NewJWTService(config)
+
+	t.Run("GenerateTokens", func(t *testing.T) {
 		user := &models.User{
 			ID:    1,
 			Email: "test@example.com",
@@ -20,20 +63,24 @@ func TestJWTService(t *testing.T) {
 			Name:  "Test Doctor",
 		}
 
-		token, err := jwtService.GenerateAccessToken(user)
+		tokens, err := jwtService.GenerateTokens(user)
 		require.NoError(t, err)
-		assert.NotEmpty(t, token)
+		assert.NotEmpty(t, tokens.AccessToken)
+		assert.NotEmpty(t, tokens.RefreshToken)
+		assert.NotNil(t, tokens.User)
 	})
 
 	t.Run("GenerateRefreshToken", func(t *testing.T) {
 		user := &models.User{
 			ID:    1,
 			Email: "test@example.com",
+			Role:  models.RoleDoctor,
+			Name:  "Test User",
 		}
 
-		token, err := jwtService.GenerateRefreshToken(user)
+		tokens, err := jwtService.GenerateTokens(user)
 		require.NoError(t, err)
-		assert.NotEmpty(t, token)
+		assert.NotEmpty(t, tokens.RefreshToken)
 	})
 
 	t.Run("ValidateToken", func(t *testing.T) {
@@ -44,30 +91,41 @@ func TestJWTService(t *testing.T) {
 			Name:  "Test Doctor",
 		}
 
-		token, err := jwtService.GenerateAccessToken(user)
+		tokens, err := jwtService.GenerateTokens(user)
 		require.NoError(t, err)
 
-		claims, err := jwtService.ValidateToken(token)
+		claims, err := jwtService.ValidateToken(tokens.AccessToken)
 		require.NoError(t, err)
 		assert.Equal(t, user.ID, claims.UserID)
 		assert.Equal(t, user.Email, claims.Email)
-		assert.Equal(t, string(user.Role), claims.Role)
+		assert.Equal(t, user.Role, claims.Role)
 	})
 
 	t.Run("ValidateExpiredToken", func(t *testing.T) {
-		shortJWT := NewJWTService("test-secret", 1*time.Millisecond, 1*time.Millisecond)
+		shortConfig := &configs.Config{
+			JWT: configs.JWTConfig{
+				Secret:              "test-secret-key-for-testing-minimum-32-chars",
+				Expires:             1 * time.Millisecond,
+				RefreshTokenExpires: 1 * time.Millisecond,
+			},
+			Security: configs.SecurityConfig{
+				BCryptCost: 10,
+			},
+		}
+		shortJWT := NewJWTService(shortConfig)
 		user := &models.User{
 			ID:    1,
 			Email: "test@example.com",
 			Role:  models.RoleDoctor,
+			Name:  "Test User",
 		}
 
-		token, err := shortJWT.GenerateAccessToken(user)
+		tokens, err := shortJWT.GenerateTokens(user)
 		require.NoError(t, err)
 
 		time.Sleep(2 * time.Millisecond)
 
-		_, err = shortJWT.ValidateToken(token)
+		_, err = shortJWT.ValidateToken(tokens.AccessToken)
 		assert.Error(t, err)
 	})
 
@@ -81,39 +139,41 @@ func TestJWTService(t *testing.T) {
 			ID:    1,
 			Email: "test@example.com",
 			Role:  models.RoleDoctor,
+			Name:  "Test User",
 		}
 
-		token, err := jwtService.GenerateAccessToken(user)
+		tokens, err := jwtService.GenerateTokens(user)
 		require.NoError(t, err)
 
 		// Token should be valid initially
-		_, err = jwtService.ValidateToken(token)
+		_, err = jwtService.ValidateToken(tokens.AccessToken)
 		require.NoError(t, err)
 
 		// Blacklist the token
-		err = jwtService.BlacklistToken(token)
+		err = jwtService.BlacklistToken(tokens.AccessToken)
 		require.NoError(t, err)
 
 		// Token should now be invalid
-		_, err = jwtService.ValidateToken(token)
+		_, err = jwtService.ValidateToken(tokens.AccessToken)
 		assert.Error(t, err)
 	})
 
-	t.Run("ValidatePassword", func(t *testing.T) {
+	t.Run("ValidatePasswordStrength", func(t *testing.T) {
 		tests := []struct {
 			password string
 			valid    bool
 		}{
 			{"short", false},
-			{"nouppercase1", false},
-			{"NOLOWERCASE1", false},
-			{"NoNumbers", false},
-			{"ValidPassword123", true},
-			{"AnotherValid1", true},
+			{"nouppercase1!", false},
+			{"NOLOWERCASE1!", false},
+			{"NoNumbers!", false},
+			{"NoSpecial123", false},
+			{"ValidPassword123!", true},
+			{"AnotherValid1@", true},
 		}
 
 		for _, test := range tests {
-			err := ValidatePassword(test.password)
+			err := ValidatePasswordStrength(test.password)
 			if test.valid {
 				assert.NoError(t, err, "Password %s should be valid", test.password)
 			} else {
@@ -123,19 +183,19 @@ func TestJWTService(t *testing.T) {
 	})
 
 	t.Run("HashAndCheckPassword", func(t *testing.T) {
-		password := "TestPassword123"
-		
-		hashedPassword, err := HashPassword(password)
+		password := "TestPassword123!"
+
+		hashedPassword, err := jwtService.HashPassword(password)
 		require.NoError(t, err)
 		assert.NotEmpty(t, hashedPassword)
 		assert.NotEqual(t, password, hashedPassword)
 
 		// Valid password should match
-		valid := CheckPasswordHash(password, hashedPassword)
+		valid := jwtService.CheckPasswordHash(password, hashedPassword)
 		assert.True(t, valid)
 
 		// Invalid password should not match
-		valid = CheckPasswordHash("WrongPassword", hashedPassword)
+		valid = jwtService.CheckPasswordHash("WrongPassword", hashedPassword)
 		assert.False(t, valid)
 	})
 }

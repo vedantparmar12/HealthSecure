@@ -1,0 +1,122 @@
+MEDICAL REPORT - PATIENT CASE STUDY
+
+Patient Information:
+-------------------
+Name: John Smith
+MRN: 12345-67890
+Date of Birth: January 15, 1975
+Age: 50 years
+Gender: Male
+Date of Visit: October 8, 2025
+
+Chief Complaint:
+---------------
+Patient presents with persistent chest discomfort and shortness of breath during physical activity for the past 2 weeks.
+
+Vital Signs:
+-----------
+Blood Pressure: 145/92 mmHg (elevated)
+Heart Rate: 88 bpm (normal range)
+Respiratory Rate: 18 breaths/min (normal)
+Temperature: 98.6°F (37°C)
+Oxygen Saturation: 96% on room air
+BMI: 28.5 (overweight)
+
+History of Present Illness:
+---------------------------
+Mr. Smith reports experiencing chest tightness and difficulty breathing when climbing stairs or walking briskly. Symptoms have been progressively worsening over the past two weeks. He denies any chest pain at rest, palpitations, or syncope. No history of similar episodes in the past.
+
+Past Medical History:
+--------------------
+- Hypertension (diagnosed 5 years ago)
+- Type 2 Diabetes Mellitus (diagnosed 3 years ago)
+- Hyperlipidemia (on statin therapy)
+- No previous cardiac events
+
+Current Medications:
+-------------------
+1. Metformin 1000mg twice daily (for diabetes)
+2. Lisinopril 20mg once daily (for hypertension)
+3. Atorvastatin 40mg at bedtime (for cholesterol)
+4. Aspirin 81mg daily (cardioprotective)
+
+Laboratory Results:
+------------------
+Complete Blood Count:
+- WBC: 7.2 x10^3/μL (normal)
+- Hemoglobin: 14.2 g/dL (normal)
+- Platelets: 245 x10^3/μL (normal)
+
+Chemistry Panel:
+- Glucose (fasting): 142 mg/dL (elevated)
+- HbA1c: 7.8% (suboptimal diabetic control)
+- Total Cholesterol: 215 mg/dL (borderline high)
+- LDL Cholesterol: 135 mg/dL (above target)
+- HDL Cholesterol: 38 mg/dL (low)
+- Triglycerides: 210 mg/dL (elevated)
+- Creatinine: 1.1 mg/dL (normal)
+- eGFR: >60 mL/min/1.73m² (normal kidney function)
+
+Cardiac Biomarkers:
+- Troponin I: <0.01 ng/mL (negative)
+- BNP: 85 pg/mL (normal)
+
+Electrocardiogram (ECG):
+------------------------
+Normal sinus rhythm. No acute ST-segment changes. Possible left ventricular hypertrophy. No evidence of acute myocardial infarction.
+
+Chest X-Ray:
+-----------
+Heart size within normal limits. No acute pulmonary infiltrates. No pleural effusions.
+
+Assessment and Plan:
+-------------------
+1. Stable Angina (Suspected):
+   - Given the patient's cardiovascular risk factors (hypertension, diabetes, hyperlipidemia, overweight), 
+     and the presentation of exertional chest discomfort, stable angina is suspected.
+   - Recommend cardiac stress test for further evaluation
+   - Consider cardiology consultation
+
+2. Suboptimal Glycemic Control:
+   - HbA1c of 7.8% indicates need for better diabetes management
+   - Increase Metformin to 1500mg twice daily
+   - Recommend nutritional counseling and increased physical activity (after cardiac clearance)
+   - Goal HbA1c: <7.0%
+
+3. Dyslipidemia:
+   - LDL above target for high-risk patient
+   - Increase Atorvastatin to 80mg at bedtime
+   - Target LDL: <70 mg/dL
+   - Recheck lipid panel in 6 weeks
+
+4. Hypertension:
+   - Blood pressure slightly elevated
+   - Continue current Lisinopril dose
+   - Monitor blood pressure at home
+   - Target BP: <130/80 mmHg
+
+Follow-up:
+----------
+- Schedule cardiac stress test within 1 week
+- Cardiology consultation pending stress test results
+- Recheck labs in 6 weeks
+- Follow-up appointment in 2 weeks to review test results
+- Patient instructed to seek emergency care if chest pain becomes severe, occurs at rest, 
+  or is associated with diaphoresis, nausea, or radiation to arm/jaw
+
+Patient Education:
+-----------------
+- Risk factors for coronary artery disease discussed
+- Importance of medication compliance emphasized
+- Lifestyle modifications recommended: diet, exercise, weight loss
+- Warning signs of heart attack reviewed
+- Patient verbalized understanding of treatment plan
+
+Physician Signature:
+-------------------
+Dr. Sarah Johnson, MD
+Internal Medicine
+License #: MD-123456
+Date: October 8, 2025
+
+END OF REPORT

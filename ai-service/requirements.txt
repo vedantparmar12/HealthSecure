@@ -16,12 +16,29 @@ langgraph
 # LangSmith integration
 langsmith
 
+# Docling - Advanced PDF processing with OCR and smart chunking
+docling
+docling-core
+
 # AG-UI RAG dependencies
 pydantic
 PyPDF2
 qdrant-client
-sentence-transformers
+sentence-transformers  # Includes cross-encoder for reranking
 faiss-cpu
+pymupdf  # PyMuPDF for fallback
+
+# Advanced Rerankers (2024/2025 SOTA - ALL FREE, NO API!)
+flashrank  # Ultra-lightweight (4MB), fastest reranker, LOCAL, FREE
+# Note: MixedBread models use sentence-transformers (already included), LOCAL, FREE
+# Note: Cross-encoders use sentence-transformers (already included), LOCAL, FREE
+
+# Hybrid Retrieval (Dense + BM25 + ColBERT - ALL FREE, NO API!)
+rank-bm25  # BM25 sparse retrieval, LOCAL, FREE
+ragatouille  # ColBERT late interaction, LOCAL, FREE
+
+# OPTIONAL API-Based Rerankers (NOT USED, NOT NEEDED)
+# cohere  # Cloud API ($$$) - NOT RECOMMENDED, we use FREE local rerankers instead
 
 # Ollama support for local models
 ollama

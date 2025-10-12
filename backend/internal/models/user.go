@@ -64,3 +64,28 @@ func (u *User) CanAccessSensitiveData() bool {
 func (u *User) CanManageUsers() bool {
 	return u.Role == RoleAdmin
 }
+
+// Alias methods for test compatibility
+func (u *User) CanAccessPatients() bool {
+	return u.CanAccessPatientData()
+}
+
+func (u *User) CanViewSensitiveData() bool {
+	return u.CanAccessSensitiveData()
+}
+
+func (u *User) CanModifyPatients() bool {
+	return u.Role == RoleDoctor || u.Role == RoleNurse
+}
+
+func (u *User) CanCreatePatients() bool {
+	return u.Role == RoleDoctor
+}
+
+func (u *User) CanViewAuditLogs() bool {
+	return u.Role == RoleAdmin
+}
+
+func (u *User) TableName() string {
+	return "users"
+}

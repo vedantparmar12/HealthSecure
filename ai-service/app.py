@@ -53,6 +53,16 @@ except ImportError as e:
     TrueAGUIAgent = None
     AGUI_AVAILABLE = False
 
+# Docling RAG integration
+try:
+    from docling_rag_analyzer import DoclingRAGAnalyzer
+    DOCLING_RAG_AVAILABLE = True
+    logger.info("Docling RAG Analyzer integration enabled")
+except ImportError as e:
+    logger.warning(f"Docling RAG Analyzer not available: {e}")
+    DoclingRAGAnalyzer = None
+    DOCLING_RAG_AVAILABLE = False
+
 # Initialize Flask app
 app = Flask(__name__)
 CORS(app)
@@ -276,15 +286,39 @@ if AGUI_AVAILABLE:
         logger.error(f"Failed to initialize AG-UI agent: {e}")
         agui_agent = None
 
+# Initialize Docling RAG Analyzer
+docling_rag = None
+if DOCLING_RAG_AVAILABLE:
+    try:
+        docling_rag = DoclingRAGAnalyzer()
+        logger.info("Docling RAG Analyzer initialized successfully")
+        if docling_rag.qdrant_client:
+            logger.info(f"✅ Qdrant connected: {docling_rag.qdrant_url}")
+        else:
+            logger.warning("⚠️ Qdrant not available - RAG search disabled")
+    except Exception as e:
+        logger.error(f"Failed to initialize Docling RAG: {e}")
+        docling_rag = None
+
 @app.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
+    rag_status = "disabled"
+    if docling_rag:
+        if docling_rag.qdrant_client:
+            rag_status = "enabled"
+        else:
+            rag_status = "no_qdrant"
+    
     return jsonify({
         "status": "healthy",
         "service": "HealthSecure AI Service",
         "langsmith_enabled": Config.LANGCHAIN_TRACING_V2,
         "ollama_web_search_enabled": WEB_SEARCH_AVAILABLE,
         "agui_enabled": AGUI_AVAILABLE,
+        "docling_rag_enabled": DOCLING_RAG_AVAILABLE,
+        "rag_status": rag_status,
+        "qdrant_url": docling_rag.qdrant_url if docling_rag else None,
         "model": Config.MODEL_NAME,
         "tools_available": len(tools),
         "search_provider": "ollama" if WEB_SEARCH_AVAILABLE else "none",
@@ -331,6 +365,35 @@ def chat():
         
         # Log the interaction
         logger.info(f"Chat request - Thread: {chat_req.thread_id}, User: {chat_req.user_id}, Role: {chat_req.user_role}")
+        
+        # RAG: Search for relevant context from documents
+        rag_context = ""
+        rag_sources = []
+        if docling_rag and docling_rag.qdrant_client:
+            try:
+                import asyncio
+                # Search for relevant chunks
+                search_results = asyncio.run(
+                    docling_rag.search_similar_chunks(chat_req.message, limit=3)
+                )
+                
+                if search_results:
+                    logger.info(f"RAG: Found {len(search_results)} relevant document chunks")
+                    rag_context = "\n\n📚 Relevant Information from Medical Documents:\n"
+                    for i, result in enumerate(search_results, 1):
+                        rag_context += f"\n[Source {i}] (Relevance: {result['similarity']:.2%})\n"
+                        rag_context += f"{result['content'][:500]}...\n"
+                        rag_sources.append({
+                            "chunk_id": result['chunk_id'],
+                            "similarity": result['similarity'],
+                            "source_file": result['metadata'].get('source_file', 'Unknown')
+                        })
+                    
+                    # Add RAG context to system prompt
+                    system_prompt += f"\n\n{rag_context}\n"
+                    system_prompt += "\nPlease use the above document excerpts to provide accurate, evidence-based responses."
+            except Exception as e:
+                logger.warning(f"RAG search failed: {e}")
         
         # Process with LangChain
         response = agent_executor.invoke(
@@ -466,6 +529,125 @@ def get_agui_state():
         "current_activity": None,
         "activity_progress": 0.0
     })
+
+@app.route('/rag/upload', methods=['POST'])
+def upload_document():
+    """Upload and ingest a medical document for RAG"""
+    if not docling_rag:
+        return jsonify({"error": "Docling RAG not available"}), 503
+    
+    if not docling_rag.qdrant_client:
+        return jsonify({"error": "Qdrant not connected"}), 503
+    
+    try:
+        # Check if file is present
+        if 'file' not in request.files:
+            return jsonify({"error": "No file provided"}), 400
+        
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({"error": "Empty filename"}), 400
+        
+        # Save file temporarily
+        import tempfile
+        import os
+        from pathlib import Path
+        
+        temp_dir = tempfile.gettempdir()
+        file_path = os.path.join(temp_dir, file.filename)
+        file.save(file_path)
+        
+        logger.info(f"Processing uploaded file: {file.filename}")
+        
+        # Process with Docling RAG
+        import asyncio
+        result = asyncio.run(docling_rag.analyze_pdf(file_path))
+        
+        # Clean up temp file
+        os.remove(file_path)
+        
+        return jsonify({
+            "success": True,
+            "filename": file.filename,
+            "chunks_created": len(result.get('rag_chunks', [])),
+            "tables_extracted": len(result.get('structured_data', {}).get('tables', [])),
+            "pages": result.get('total_pages', 0),
+            "file_hash": result.get('file_hash', ''),
+            "message": "Document ingested successfully"
+        })
+        
+    except Exception as e:
+        logger.error(f"Document upload error: {str(e)}", exc_info=True)
+        return jsonify({
+            "error": "Failed to process document",
+            "details": str(e)
+        }), 500
+
+@app.route('/rag/search', methods=['POST'])
+def search_documents():
+    """Search for similar content in ingested documents"""
+    if not docling_rag:
+        return jsonify({"error": "Docling RAG not available"}), 503
+    
+    if not docling_rag.qdrant_client:
+        return jsonify({"error": "Qdrant not connected"}), 503
+    
+    try:
+        data = request.get_json()
+        query = data.get('query', '')
+        limit = data.get('limit', 5)
+        
+        if not query:
+            return jsonify({"error": "Query cannot be empty"}), 400
+        
+        logger.info(f"RAG search: {query}")
+        
+        # Search with Docling RAG
+        import asyncio
+        results = asyncio.run(docling_rag.search_similar_chunks(query, limit=limit))
+        
+        return jsonify({
+            "success": True,
+            "query": query,
+            "results_count": len(results),
+            "results": results
+        })
+        
+    except Exception as e:
+        logger.error(f"RAG search error: {str(e)}", exc_info=True)
+        return jsonify({
+            "error": "Failed to search documents",
+            "details": str(e)
+        }), 500
+
+@app.route('/rag/status', methods=['GET'])
+def rag_status():
+    """Get RAG system status and statistics"""
+    if not docling_rag:
+        return jsonify({
+            "rag_available": False,
+            "message": "Docling RAG not initialized"
+        })
+    
+    status_data = {
+        "rag_available": True,
+        "qdrant_connected": docling_rag.qdrant_client is not None,
+        "qdrant_url": docling_rag.qdrant_url,
+        "collection_name": docling_rag.collection_name,
+        "vector_size": docling_rag.vector_size,
+        "embedding_model": "mxbai-embed-large"
+    }
+    
+    # Get collection stats if Qdrant is connected
+    if docling_rag.qdrant_client:
+        try:
+            collection_info = docling_rag.qdrant_client.get_collection(docling_rag.collection_name)
+            status_data["documents_count"] = collection_info.points_count
+            status_data["collection_status"] = collection_info.status
+        except Exception as e:
+            status_data["collection_error"] = str(e)
+    
+    return jsonify(status_data)
 
 @app.errorhandler(404)
 def not_found(error):

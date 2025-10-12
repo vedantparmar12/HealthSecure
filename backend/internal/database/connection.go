@@ -1,6 +1,7 @@
 package database
 
 import (
+	"crypto/tls"
 	"fmt"
 	"log"
 	"os"
@@ -10,7 +11,8 @@ import (
 	"healthsecure/configs"
 	"healthsecure/internal/models"
 
-	"gorm.io/driver/mysql"
+	"github.com/go-sql-driver/mysql"
+	gorm_mysql "gorm.io/driver/mysql"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -37,7 +39,25 @@ func Initialize(config *configs.Config) error {
 
 	// Use MySQL for Railway or remote hosts, SQLite for local development
 	if config.Database.Host != "" && config.Database.Host != "localhost" && config.Database.Host != "127.0.0.1" {
-		DB, err = gorm.Open(mysql.Open(config.GetDatabaseDSN()), gormConfig)
+		// Register custom TLS config for Railway MySQL
+		tlsConfig := &tls.Config{
+			InsecureSkipVerify: true, // For Railway, skip certificate verification
+		}
+		if err := mysql.RegisterTLSConfig("railway", tlsConfig); err != nil {
+			log.Printf("Failed to register TLS config: %v", err)
+		}
+		
+		// Update DSN to use custom TLS config
+		dsn := config.GetDatabaseDSN()
+		if config.Database.TLSMode != "" && config.Database.TLSMode != "preferred" {
+			// Replace the tls parameter with our custom config
+			dsn = strings.Replace(dsn, "&tls="+config.Database.TLSMode, "&tls=railway", 1)
+		} else {
+			// Add TLS if not present
+			dsn += "&tls=railway"
+		}
+		
+		DB, err = gorm.Open(gorm_mysql.Open(dsn), gormConfig)
 		if err != nil {
 			log.Printf("MySQL connection failed, falling back to SQLite: %v", err)
 			// Create data directory if it doesn't exist

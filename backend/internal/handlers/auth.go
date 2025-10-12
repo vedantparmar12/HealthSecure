@@ -51,6 +51,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"message":       "Login successful",
+		"token":         tokens.AccessToken,
 		"access_token":  tokens.AccessToken,
 		"refresh_token": tokens.RefreshToken,
 		"expires_at":    tokens.ExpiresAt,
@@ -102,6 +103,7 @@ func (h *AuthHandler) Signup(c *gin.Context) {
 
 	c.JSON(http.StatusCreated, gin.H{
 		"message":       "Account created and logged in successfully",
+		"token":         tokens.AccessToken,
 		"access_token":  tokens.AccessToken,
 		"refresh_token": tokens.RefreshToken,
 		"expires_at":    tokens.ExpiresAt,
@@ -128,6 +130,7 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"message":       "Token refreshed successfully",
+		"token":         tokens.AccessToken,
 		"access_token":  tokens.AccessToken,
 		"refresh_token": tokens.RefreshToken,
 		"expires_at":    tokens.ExpiresAt,
@@ -250,6 +253,7 @@ func (h *AuthHandler) OAuthCallback(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"message":       "OAuth login successful",
+		"token":         tokens.AccessToken,
 		"access_token":  tokens.AccessToken,
 		"refresh_token": tokens.RefreshToken,
 		"expires_at":    tokens.ExpiresAt,

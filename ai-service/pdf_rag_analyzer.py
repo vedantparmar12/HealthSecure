@@ -138,10 +138,11 @@ class PDFRAGAnalyzer:
             if self.qdrant_api_key:
                 self.qdrant_client = QdrantClient(
                     url=self.qdrant_url,
-                    api_key=self.qdrant_api_key
+                    api_key=self.qdrant_api_key,
+                    check_compatibility=False
                 )
             else:
-                self.qdrant_client = QdrantClient(url=self.qdrant_url)
+                self.qdrant_client = QdrantClient(url=self.qdrant_url, check_compatibility=False)
 
             # Create collection if it doesn't exist
             collections = self.qdrant_client.get_collections().collections

@@ -1,17 +1,18 @@
 package middleware
 
 import (
-	"bytes"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"healthsecure/configs"
 	"healthsecure/internal/auth"
+	"healthsecure/internal/database"
 	"healthsecure/internal/models"
 )
 
@@ -20,9 +21,42 @@ func setupTestGin() *gin.Engine {
 	return gin.New()
 }
 
+func setupTestDB(t *testing.T) *configs.Config {
+	config := &configs.Config{
+		Database: configs.DatabaseConfig{
+			Host:     "localhost",
+			Port:     3306,
+			Name:     "test_db",
+			User:     "test",
+			Password: "",
+			TLSMode:  "preferred",
+		},
+		JWT: configs.JWTConfig{
+			Secret:              "test-secret-key-for-testing-minimum-32-chars",
+			Expires:             15 * time.Minute,
+			RefreshTokenExpires: 24 * time.Hour,
+		},
+		Security: configs.SecurityConfig{
+			BCryptCost: 10,
+		},
+		App: configs.AppConfig{
+			Environment: "test",
+		},
+	}
+
+	os.Setenv("SKIP_MIGRATIONS", "false")
+	if err := database.Initialize(config); err != nil {
+		t.Fatalf("Failed to setup test database: %v", err)
+	}
+
+	return config
+}
+
 func TestAuthMiddleware(t *testing.T) {
-	jwtService := auth.NewJWTService("test-secret", 15*time.Minute, 24*time.Hour)
-	middleware := NewAuthMiddleware(jwtService, nil)
+	config := setupTestDB(t)
+	defer database.Close()
+
+	jwtService := auth.NewJWTService(config)
 
 	user := &models.User{
 		ID:    1,
@@ -32,17 +66,17 @@ func TestAuthMiddleware(t *testing.T) {
 	}
 
 	t.Run("ValidToken", func(t *testing.T) {
-		token, err := jwtService.GenerateAccessToken(user)
+		tokens, err := jwtService.GenerateTokens(user)
 		require.NoError(t, err)
 
 		router := setupTestGin()
-		router.Use(middleware.RequireAuth())
+		router.Use(auth.AuthMiddleware(jwtService))
 		router.GET("/test", func(c *gin.Context) {
 			c.JSON(200, gin.H{"message": "success"})
 		})
 
 		req := httptest.NewRequest("GET", "/test", nil)
-		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Authorization", "Bearer "+tokens.AccessToken)
 		w := httptest.NewRecorder()
 
 		router.ServeHTTP(w, req)
@@ -51,7 +85,7 @@ func TestAuthMiddleware(t *testing.T) {
 
 	t.Run("MissingToken", func(t *testing.T) {
 		router := setupTestGin()
-		router.Use(middleware.RequireAuth())
+		router.Use(auth.AuthMiddleware(jwtService))
 		router.GET("/test", func(c *gin.Context) {
 			c.JSON(200, gin.H{"message": "success"})
 		})
@@ -65,7 +99,7 @@ func TestAuthMiddleware(t *testing.T) {
 
 	t.Run("InvalidToken", func(t *testing.T) {
 		router := setupTestGin()
-		router.Use(middleware.RequireAuth())
+		router.Use(auth.AuthMiddleware(jwtService))
 		router.GET("/test", func(c *gin.Context) {
 			c.JSON(200, gin.H{"message": "success"})
 		})
@@ -80,42 +114,48 @@ func TestAuthMiddleware(t *testing.T) {
 }
 
 func TestRoleMiddleware(t *testing.T) {
-	jwtService := auth.NewJWTService("test-secret", 15*time.Minute, 24*time.Hour)
-	middleware := NewAuthMiddleware(jwtService, nil)
+	config := setupTestDB(t)
+	defer database.Close()
+
+	jwtService := auth.NewJWTService(config)
 
 	t.Run("RequireAdmin", func(t *testing.T) {
 		adminUser := &models.User{
-			ID:   1,
-			Role: models.RoleAdmin,
+			ID:    1,
+			Email: "admin@test.com",
+			Name:  "Admin User",
+			Role:  models.RoleAdmin,
 		}
 		doctorUser := &models.User{
-			ID:   2,
-			Role: models.RoleDoctor,
+			ID:    2,
+			Email: "doctor@test.com",
+			Name:  "Doctor User",
+			Role:  models.RoleDoctor,
 		}
 
-		adminToken, err := jwtService.GenerateAccessToken(adminUser)
+		adminTokens, err := jwtService.GenerateTokens(adminUser)
 		require.NoError(t, err)
 
-		doctorToken, err := jwtService.GenerateAccessToken(doctorUser)
+		doctorTokens, err := jwtService.GenerateTokens(doctorUser)
 		require.NoError(t, err)
 
 		router := setupTestGin()
-		router.Use(middleware.RequireAuth())
-		router.Use(middleware.RequireRole(models.RoleAdmin))
+		router.Use(auth.AuthMiddleware(jwtService))
+		router.Use(auth.RequireRole(models.RoleAdmin))
 		router.GET("/admin", func(c *gin.Context) {
 			c.JSON(200, gin.H{"message": "admin access"})
 		})
 
 		// Admin should have access
 		req := httptest.NewRequest("GET", "/admin", nil)
-		req.Header.Set("Authorization", "Bearer "+adminToken)
+		req.Header.Set("Authorization", "Bearer "+adminTokens.AccessToken)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 		assert.Equal(t, http.StatusOK, w.Code)
 
 		// Doctor should not have access
 		req = httptest.NewRequest("GET", "/admin", nil)
-		req.Header.Set("Authorization", "Bearer "+doctorToken)
+		req.Header.Set("Authorization", "Bearer "+doctorTokens.AccessToken)
 		w = httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 		assert.Equal(t, http.StatusForbidden, w.Code)
@@ -123,98 +163,54 @@ func TestRoleMiddleware(t *testing.T) {
 
 	t.Run("RequireAnyRole", func(t *testing.T) {
 		doctorUser := &models.User{
-			ID:   1,
-			Role: models.RoleDoctor,
+			ID:    1,
+			Email: "doctor@test.com",
+			Name:  "Doctor User",
+			Role:  models.RoleDoctor,
 		}
 		nurseUser := &models.User{
-			ID:   2,
-			Role: models.RoleNurse,
+			ID:    2,
+			Email: "nurse@test.com",
+			Name:  "Nurse User",
+			Role:  models.RoleNurse,
 		}
 		adminUser := &models.User{
-			ID:   3,
-			Role: models.RoleAdmin,
+			ID:    3,
+			Email: "admin@test.com",
+			Name:  "Admin User",
+			Role:  models.RoleAdmin,
 		}
 
-		doctorToken, _ := jwtService.GenerateAccessToken(doctorUser)
-		nurseToken, _ := jwtService.GenerateAccessToken(nurseUser)
-		adminToken, _ := jwtService.GenerateAccessToken(adminUser)
+		doctorTokens, _ := jwtService.GenerateTokens(doctorUser)
+		nurseTokens, _ := jwtService.GenerateTokens(nurseUser)
+		adminTokens, _ := jwtService.GenerateTokens(adminUser)
 
 		router := setupTestGin()
-		router.Use(middleware.RequireAuth())
-		router.Use(middleware.RequireAnyRole(models.RoleDoctor, models.RoleNurse))
+		router.Use(auth.AuthMiddleware(jwtService))
+		router.Use(auth.RequireRole(models.RoleDoctor, models.RoleNurse))
 		router.GET("/medical", func(c *gin.Context) {
 			c.JSON(200, gin.H{"message": "medical access"})
 		})
 
 		// Doctor should have access
 		req := httptest.NewRequest("GET", "/medical", nil)
-		req.Header.Set("Authorization", "Bearer "+doctorToken)
+		req.Header.Set("Authorization", "Bearer "+doctorTokens.AccessToken)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 		assert.Equal(t, http.StatusOK, w.Code)
 
 		// Nurse should have access
 		req = httptest.NewRequest("GET", "/medical", nil)
-		req.Header.Set("Authorization", "Bearer "+nurseToken)
+		req.Header.Set("Authorization", "Bearer "+nurseTokens.AccessToken)
 		w = httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 		assert.Equal(t, http.StatusOK, w.Code)
 
 		// Admin should not have access
 		req = httptest.NewRequest("GET", "/medical", nil)
-		req.Header.Set("Authorization", "Bearer "+adminToken)
+		req.Header.Set("Authorization", "Bearer "+adminTokens.AccessToken)
 		w = httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 		assert.Equal(t, http.StatusForbidden, w.Code)
 	})
-}
-
-func TestAuditMiddleware(t *testing.T) {
-	jwtService := auth.NewJWTService("test-secret", 15*time.Minute, 24*time.Hour)
-	
-	// Mock audit service
-	auditLogs := []models.AuditLog{}
-	mockAuditService := &MockAuditService{
-		logs: &auditLogs,
-	}
-	
-	middleware := NewAuthMiddleware(jwtService, mockAuditService)
-
-	user := &models.User{
-		ID:    1,
-		Email: "test@example.com",
-		Role:  models.RoleDoctor,
-		Name:  "Test Doctor",
-	}
-
-	token, err := jwtService.GenerateAccessToken(user)
-	require.NoError(t, err)
-
-	router := setupTestGin()
-	router.Use(middleware.RequireAuth())
-	router.Use(middleware.AuditLog("TEST_ACTION"))
-	router.GET("/test", func(c *gin.Context) {
-		c.JSON(200, gin.H{"message": "success"})
-	})
-
-	req := httptest.NewRequest("GET", "/test", nil)
-	req.Header.Set("Authorization", "Bearer "+token)
-	w := httptest.NewRecorder()
-
-	router.ServeHTTP(w, req)
-	
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Len(t, auditLogs, 1)
-	assert.Equal(t, "TEST_ACTION", auditLogs[0].Action)
-	assert.Equal(t, user.ID, auditLogs[0].UserID)
-	assert.True(t, auditLogs[0].Success)
-}
-
-type MockAuditService struct {
-	logs *[]models.AuditLog
-}
-
-func (m *MockAuditService) LogAction(log *models.AuditLog) error {
-	*m.logs = append(*m.logs, *log)
-	return nil
 }

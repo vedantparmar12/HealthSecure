@@ -114,14 +114,33 @@ func LoadConfig() (*Config, error) {
 	setDefaults()
 
 	// Load from .env file if it exists
-	viper.SetConfigFile("../configs/.env")
-	viper.SetConfigType("env")
-	if err := viper.ReadInConfig(); err != nil {
-		// Try alternative path
-		viper.SetConfigFile("./configs/.env")
-		if err2 := viper.ReadInConfig(); err2 != nil {
-			log.Printf("Warning: Could not load .env file from ../configs/.env or ./configs/.env: %v, %v", err, err2)
+	// Try multiple possible paths depending on where the command is run from
+	envPaths := []string{
+		"../../../configs/.env",  // From backend/cmd/server
+		"../../configs/.env",      // From backend/cmd
+		"../configs/.env",         // From backend
+		"./configs/.env",          // From root
+		"configs/.env",            // From root (alternative)
+	}
+	
+	loaded := false
+	var loadErrors []error
+	
+	for _, path := range envPaths {
+		viper.SetConfigFile(path)
+		viper.SetConfigType("env")
+		if err := viper.ReadInConfig(); err == nil {
+			log.Printf("Loaded configuration from: %s", path)
+			loaded = true
+			break
+		} else {
+			loadErrors = append(loadErrors, err)
 		}
+	}
+	
+	if !loaded {
+		log.Printf("Warning: Could not load .env file from any of the expected paths")
+		log.Printf("Attempted paths: %v", envPaths)
 	}
 
 	// Read environment variables
@@ -168,7 +187,7 @@ func LoadConfig() (*Config, error) {
 	}
 
 	config.App = AppConfig{
-		ServerPort:  getEnvAsInt("SERVER_PORT", 8080),
+		ServerPort:  getEnvAsInt("SERVER_PORT", 8081),
 		Environment: getEnv("ENVIRONMENT", "development"),
 		LogLevel:    getEnv("LOG_LEVEL", "info"),
 		EnableCORS:  getEnvAsBool("ENABLE_CORS", true),
@@ -204,7 +223,7 @@ func setDefaults() {
 	viper.SetDefault("database.name", "healthsecure")
 	viper.SetDefault("redis.host", "localhost")
 	viper.SetDefault("redis.port", 6379)
-	viper.SetDefault("app.server_port", 8080)
+	viper.SetDefault("app.server_port", 8081)
 	viper.SetDefault("app.environment", "development")
 	viper.SetDefault("app.log_level", "info")
 	viper.SetDefault("security.bcrypt_cost", 12)

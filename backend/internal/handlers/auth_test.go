@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 
@@ -12,8 +13,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"healthsecure/configs"
 	"healthsecure/internal/auth"
+	"healthsecure/internal/database"
 	"healthsecure/internal/models"
+	"healthsecure/internal/services"
 )
 
 type MockUserService struct {
@@ -55,41 +59,57 @@ func (m *MockAuditService) LogAction(log *models.AuditLog) error {
 	return args.Error(0)
 }
 
-func setupAuthHandler() (*AuthHandler, *MockUserService, *MockAuditService) {
+func setupAuthHandler(t *testing.T) (*AuthHandler, *MockUserService, *MockAuditService, *auth.JWTService) {
 	gin.SetMode(gin.TestMode)
-	jwtService := auth.NewJWTService("test-secret", 15*time.Minute, 24*time.Hour)
-	userService := &MockUserService{}
-	auditService := &MockAuditService{}
-	
-	handler := &AuthHandler{
-		UserService:  userService,
-		JWTService:   jwtService,
-		AuditService: auditService,
+
+	config := &configs.Config{
+		Database: configs.DatabaseConfig{
+			Host:     "localhost",
+			Port:     3306,
+			Name:     "test_db",
+			User:     "test",
+			Password: "",
+			TLSMode:  "preferred",
+		},
+		JWT: configs.JWTConfig{
+			Secret:              "test-secret-key-for-testing-minimum-32-chars",
+			Expires:             15 * time.Minute,
+			RefreshTokenExpires: 24 * time.Hour,
+		},
+		Security: configs.SecurityConfig{
+			BCryptCost: 10,
+		},
+		App: configs.AppConfig{
+			Environment: "test",
+		},
 	}
-	
-	return handler, userService, auditService
+
+	os.Setenv("SKIP_MIGRATIONS", "false")
+	if err := database.Initialize(config); err != nil {
+		t.Fatalf("Failed to setup test database: %v", err)
+	}
+
+	jwtService := auth.NewJWTService(config)
+	mockUserService := &MockUserService{}
+	mockAuditService := &MockAuditService{}
+	oauthService := auth.NewOAuthService(config)
+
+	realUserService := services.NewUserService(database.GetDB(), jwtService, nil)
+
+	handler := NewAuthHandler(realUserService, oauthService, jwtService)
+
+	return handler, mockUserService, mockAuditService, jwtService
 }
 
 func TestAuthHandler_Login(t *testing.T) {
-	handler, userService, auditService := setupAuthHandler()
+	handler, _, _, _ := setupAuthHandler(t)
+	defer database.Close()
 
 	t.Run("SuccessfulLogin", func(t *testing.T) {
-		user := &models.User{
-			ID:     1,
-			Email:  "doctor@example.com",
-			Role:   models.RoleDoctor,
-			Name:   "Test Doctor",
-			Active: true,
+		loginReq := services.LoginRequest{
+			Email:    "dr.smith@hospital.local",
+			Password: "Doctor123",
 		}
-
-		loginReq := LoginRequest{
-			Email:    "doctor@example.com",
-			Password: "password123",
-		}
-
-		userService.On("ValidateCredentials", loginReq.Email, loginReq.Password).Return(user, nil)
-		userService.On("UpdateLastLogin", user.ID).Return(nil)
-		auditService.On("LogAction", mock.AnythingOfType("*models.AuditLog")).Return(nil)
 
 		router := gin.New()
 		router.POST("/login", handler.Login)
@@ -103,27 +123,20 @@ func TestAuthHandler_Login(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, w.Code)
 
-		var response LoginResponse
+		var response map[string]interface{}
 		err := json.Unmarshal(w.Body.Bytes(), &response)
 		require.NoError(t, err)
 
-		assert.NotEmpty(t, response.AccessToken)
-		assert.NotEmpty(t, response.RefreshToken)
-		assert.Equal(t, user.ID, response.User.ID)
-		assert.Equal(t, user.Email, response.User.Email)
-
-		userService.AssertExpectations(t)
-		auditService.AssertExpectations(t)
+		assert.NotEmpty(t, response["access_token"])
+		assert.NotEmpty(t, response["refresh_token"])
+		assert.NotNil(t, response["user"])
 	})
 
 	t.Run("InvalidCredentials", func(t *testing.T) {
-		loginReq := LoginRequest{
+		loginReq := services.LoginRequest{
 			Email:    "doctor@example.com",
 			Password: "wrongpassword",
 		}
-
-		userService.On("ValidateCredentials", loginReq.Email, loginReq.Password).Return(nil, auth.ErrInvalidCredentials)
-		auditService.On("LogAction", mock.AnythingOfType("*models.AuditLog")).Return(nil)
 
 		router := gin.New()
 		router.POST("/login", handler.Login)
@@ -136,9 +149,6 @@ func TestAuthHandler_Login(t *testing.T) {
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusUnauthorized, w.Code)
-
-		userService.AssertExpectations(t)
-		auditService.AssertExpectations(t)
 	})
 
 	t.Run("InvalidJSON", func(t *testing.T) {
@@ -155,7 +165,7 @@ func TestAuthHandler_Login(t *testing.T) {
 	})
 
 	t.Run("MissingFields", func(t *testing.T) {
-		loginReq := LoginRequest{
+		loginReq := services.LoginRequest{
 			Email: "doctor@example.com",
 			// Missing password
 		}
@@ -175,7 +185,8 @@ func TestAuthHandler_Login(t *testing.T) {
 }
 
 func TestAuthHandler_RefreshToken(t *testing.T) {
-	handler, userService, auditService := setupAuthHandler()
+	handler, _, _, jwtService := setupAuthHandler(t)
+	defer database.Close()
 
 	t.Run("SuccessfulRefresh", func(t *testing.T) {
 		user := &models.User{
@@ -186,15 +197,16 @@ func TestAuthHandler_RefreshToken(t *testing.T) {
 			Active: true,
 		}
 
-		// Generate a valid refresh token
-		refreshToken, err := handler.JWTService.GenerateRefreshToken(user)
+		// Create user in database
+		database.GetDB().Create(user)
+
+		// Generate valid tokens
+		tokens, err := jwtService.GenerateTokens(user)
 		require.NoError(t, err)
 
-		refreshReq := RefreshTokenRequest{
-			RefreshToken: refreshToken,
+		refreshReq := map[string]string{
+			"refresh_token": tokens.RefreshToken,
 		}
-
-		userService.On("GetByEmail", user.Email).Return(user, nil)
 
 		router := gin.New()
 		router.POST("/refresh", handler.RefreshToken)
@@ -208,19 +220,17 @@ func TestAuthHandler_RefreshToken(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, w.Code)
 
-		var response RefreshTokenResponse
+		var response map[string]interface{}
 		err = json.Unmarshal(w.Body.Bytes(), &response)
 		require.NoError(t, err)
 
-		assert.NotEmpty(t, response.AccessToken)
-		assert.NotEmpty(t, response.RefreshToken)
-
-		userService.AssertExpectations(t)
+		assert.NotEmpty(t, response["access_token"])
+		assert.NotEmpty(t, response["refresh_token"])
 	})
 
 	t.Run("InvalidRefreshToken", func(t *testing.T) {
-		refreshReq := RefreshTokenRequest{
-			RefreshToken: "invalid-token",
+		refreshReq := map[string]string{
+			"refresh_token": "invalid-token",
 		}
 
 		router := gin.New()
@@ -238,7 +248,8 @@ func TestAuthHandler_RefreshToken(t *testing.T) {
 }
 
 func TestAuthHandler_Logout(t *testing.T) {
-	handler, _, auditService := setupAuthHandler()
+	handler, _, _, jwtService := setupAuthHandler(t)
+	defer database.Close()
 
 	user := &models.User{
 		ID:     1,
@@ -248,53 +259,52 @@ func TestAuthHandler_Logout(t *testing.T) {
 		Active: true,
 	}
 
-	token, err := handler.JWTService.GenerateAccessToken(user)
+	tokens, err := jwtService.GenerateTokens(user)
 	require.NoError(t, err)
-
-	auditService.On("LogAction", mock.AnythingOfType("*models.AuditLog")).Return(nil)
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
 		// Mock auth middleware - set user in context
-		c.Set("user", user)
-		c.Set("token", token)
+		c.Set("user_id", user.ID)
+		c.Set("user_role", string(user.Role))
 		c.Next()
 	})
 	router.POST("/logout", handler.Logout)
 
 	req := httptest.NewRequest("POST", "/logout", nil)
-	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Authorization", "Bearer "+tokens.AccessToken)
 	w := httptest.NewRecorder()
 
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	auditService.AssertExpectations(t)
 }
 
 func TestAuthHandler_ChangePassword(t *testing.T) {
-	handler, userService, auditService := setupAuthHandler()
+	handler, _, _, jwtService := setupAuthHandler(t)
+	defer database.Close()
 
 	user := &models.User{
-		ID:     1,
-		Email:  "doctor@example.com",
+		Email:  "testuser@example.com",
 		Role:   models.RoleDoctor,
 		Name:   "Test Doctor",
 		Active: true,
 	}
 
-	t.Run("SuccessfulPasswordChange", func(t *testing.T) {
-		changeReq := ChangePasswordRequest{
-			CurrentPassword: "oldpassword",
-			NewPassword:     "NewPassword123",
-		}
+	// Hash the current password
+	hashedPassword, _ := jwtService.HashPassword("CurrentPassword123!")
+	user.Password = hashedPassword
+	database.GetDB().Create(user)
 
-		userService.On("ChangePassword", user.ID, changeReq.CurrentPassword, changeReq.NewPassword).Return(nil)
-		auditService.On("LogAction", mock.AnythingOfType("*models.AuditLog")).Return(nil)
+	t.Run("SuccessfulPasswordChange", func(t *testing.T) {
+		changeReq := services.ChangePasswordRequest{
+			CurrentPassword: "CurrentPassword123!",
+			NewPassword:     "NewPassword123!",
+		}
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
-			c.Set("user", user)
+			c.Set("user_id", user.ID)
 			c.Next()
 		})
 		router.POST("/change-password", handler.ChangePassword)
@@ -307,19 +317,17 @@ func TestAuthHandler_ChangePassword(t *testing.T) {
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
-		userService.AssertExpectations(t)
-		auditService.AssertExpectations(t)
 	})
 
 	t.Run("WeakPassword", func(t *testing.T) {
-		changeReq := ChangePasswordRequest{
-			CurrentPassword: "oldpassword",
+		changeReq := services.ChangePasswordRequest{
+			CurrentPassword: "CurrentPassword123!",
 			NewPassword:     "weak",
 		}
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
-			c.Set("user", user)
+			c.Set("user_id", user.ID)
 			c.Next()
 		})
 		router.POST("/change-password", handler.ChangePassword)

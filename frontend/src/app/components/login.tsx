@@ -17,7 +17,7 @@ export default function Login({ onLogin }: LoginProps) {
   useEffect(() => {
     const fetchDefaults = async () => {
       try {
-        const response = await fetch('http://localhost:8080/api/auth/defaults');
+        const response = await fetch('/api/auth/defaults'); // Use relative URL
         if (response.ok) {
           const data = await response.json();
           setRoleDefaults(data.defaults);
@@ -60,8 +60,11 @@ export default function Login({ onLogin }: LoginProps) {
     setIsLoading(true);
 
     try {
-      // Connect to Go backend for authentication
-      const response = await fetch('http://localhost:8080/api/auth/login', {
+      // Connect to Go backend for authentication (using Next.js API proxy)
+      const apiUrl = '/api/auth/login'; // Use relative URL to leverage Next.js rewrites
+      console.log('Attempting login to:', apiUrl);
+      
+      const response = await fetch(apiUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

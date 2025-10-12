@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HealthSecure Login Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 { color: #333; }
+        input, button {
+            width: 100%;
+            padding: 12px;
+            margin: 10px 0;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:hover { background: #45a049; }
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 4px;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        .success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .info { background: #d1ecf1; color: #0c5460; border: 1px solid #bee5eb; }
+        .demo {
+            background: #fff3cd;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+            font-size: 13px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔐 HealthSecure Login Test</h1>
+        <p>Direct API test without Next.js/React interference</p>
+        
+        <div class="demo">
+            <strong>Demo Credentials:</strong><br>
+            Doctor: dr.smith@hospital.local / Doctor123<br>
+            Nurse: nurse.jane@hospital.local / Nurse123<br>
+            Admin: admin@hospital.local / admin123
+        </div>
+
+        <form id="loginForm">
+            <input type="email" id="email" placeholder="Email" value="dr.smith@hospital.local" required>
+            <input type="password" id="password" placeholder="Password" value="Doctor123" required>
+            <button type="submit">🚀 Test Login</button>
+        </form>
+
+        <div id="result"></div>
+    </div>
+
+    <script>
+        document.getElementById('loginForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const resultDiv = document.getElementById('result');
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            
+            resultDiv.innerHTML = '<div class="info">⏳ Testing login...</div>';
+            
+            try {
+                console.log('Attempting login to:', 'http://localhost:8081/api/auth/login');
+                console.log('Email:', email);
+                
+                const response = await fetch('http://localhost:8081/api/auth/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ email, password })
+                });
+                
+                console.log('Response status:', response.status);
+                const data = await response.json();
+                console.log('Response data:', data);
+                
+                if (response.ok) {
+                    resultDiv.innerHTML = `
+                        <div class="success">
+                            <strong>✅ LOGIN SUCCESSFUL!</strong><br><br>
+                            <strong>User:</strong> ${data.user.name}<br>
+                            <strong>Email:</strong> ${data.user.email}<br>
+                            <strong>Role:</strong> ${data.user.role}<br>
+                            <strong>User ID:</strong> ${data.user.id}<br><br>
+                            <strong>Message:</strong> ${data.message}<br><br>
+                            <strong>Token (first 50 chars):</strong><br>
+                            ${data.token ? data.token.substring(0, 50) + '...' : 'N/A'}
+                        </div>
+                    `;
+                } else {
+                    resultDiv.innerHTML = `
+                        <div class="error">
+                            <strong>❌ LOGIN FAILED</strong><br><br>
+                            <strong>Status:</strong> ${response.status}<br>
+                            <strong>Error:</strong> ${data.error || data.message || 'Unknown error'}<br><br>
+                            <strong>Full response:</strong><br>
+                            ${JSON.stringify(data, null, 2)}
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                console.error('Login error:', error);
+                resultDiv.innerHTML = `
+                    <div class="error">
+                        <strong>❌ CONNECTION ERROR</strong><br><br>
+                        <strong>Error:</strong> ${error.message}<br><br>
+                        <strong>Possible causes:</strong><br>
+                        1. Backend not running on port 8081<br>
+                        2. CORS issue (check browser console)<br>
+                        3. Network/firewall blocking the request<br><br>
+                        <strong>Check:</strong><br>
+                        - Is backend running? Open new terminal and run:<br>
+                        <code>cd backend/cmd/server && go run main.go</code><br><br>
+                        - Test health endpoint: <a href="http://localhost:8081/health" target="_blank">http://localhost:8081/health</a>
+                    </div>
+                `;
+            }
+        });
+    </script>
+</body>
+</html>
