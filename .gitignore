@@ -81,3 +81,42 @@ redis_data/
 # Backup files
 *.bak
 *.backup
+
+# Development/Status documentation files (keep README.md and docs/)
+*_STATUS.md
+*_COMPLETE.md
+*_INTEGRATION.md
+*_GUIDE.md
+*_SETUP.md
+*_FIXES.md
+QUICK_START.txt
+SCRIPTS_SUMMARY.md
+STARTUP_GUIDE.md
+QUICKSTART.md
+START_HERE.md
+frontend/LANDING_PAGE_README.md
+frontend/NAVBAR_UPDATE.md
+frontend/PAGES_AND_BACKEND_GUIDE.md
+frontend/PERFORMANCE_FIXES.md
+
+# Test and temporary batch files
+test_*.bat
+*_test.bat
+start_healthsecure.bat
+stop_healthsecure.bat
+
+# Windows error output files
+nul
+
+# Qdrant database storage (auto-managed)
+qdrant/storage/
+
+# Next.js
+frontend/.next/
+frontend/out/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
